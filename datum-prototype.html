@@ -2394,6 +2394,33 @@ const SYNTH = {
 // half-silent while the sound pass is in progress.
 const SFXBUF = {};                 // key -> AudioBuffer
 const LOOPS  = {};                 // key -> { src, gain }
+let musicGain = 8;                 // lift for supplied loops — see rewireLoops
+
+// [ and ] while the debug panel is up. Judging music by ear needs a knob, not
+// a rebuild, and the H panel reports where it currently sits.
+function setMusicGain(x) {
+  musicGain = Math.max(0.25, Math.min(24, x));
+  for (const k in LOOPS)
+    if (k.indexOf('music_') === 0) LOOPS[k].gain.gain.value = musicGain;
+  note('MUSIC ×' + musicGain.toFixed(1));
+  return musicGain;
+}
+
+// One line in the H panel that says what the audio graph actually did. None of
+// this can be judged by reading the source.
+function audioLine() {
+  if (!AU.ctx) return 'audio · not started (click or press a key)';
+  const g = (n) => n ? n.gain.value.toFixed(2) : '—';
+  // muVol is on the tuning panel above and multiplies all of this — at 0.25 a
+  // mastered track lands far enough down that it reads as no music at all.
+  return 'build ' + BUILD + '<br>' +
+    'audio ' + AU.ctx.state + ' · ' + Object.keys(SFXBUF).length + ' buf · ' +
+    Object.keys(LOOPS).length + ' loops · ' + AU.mode + '<br>' +
+    'amb ' + g(AU.amb) + ' apr ' + g(AU.apr) + ' cmb ' + g(AU.cmb) +
+    ' bos ' + g(AU.bos) + '<br>' +
+    'muVol ' + g(AU.music) + ' × lift ' + musicGain.toFixed(1) +
+    ' = ' + (AU.music.gain.value * musicGain).toFixed(2) + ' <b>[ ]</b>';
+}
 
 // A window onto the audio graph, because none of this can be judged by reading
 // the source — open the console and ask DBG what actually got wired.
@@ -2459,13 +2486,12 @@ function rewireLoops() {
   // the music bus sits at 0.34 to suit it. A mastered file mixed to −19 LUFS
   // comes through that same bus about fifteen decibels under where the synth
   // sits — decoded, wired, running and inaudible. Samples get their own lift.
-  const M = 3.5, A = 1.2;
-  startLoop('music_ambient',  AU.amb, M);
-  startLoop('music_approach', AU.apr, M);
-  startLoop('music_combat',   AU.cmb, M);
-  startLoop('music_boss',     AU.bos, M);
-  startLoop('amb_drone', AU.dry, A);
-  startLoop('amb_wind',  AU.dry, A);
+  startLoop('music_ambient',  AU.amb, musicGain);
+  startLoop('music_approach', AU.apr, musicGain);
+  startLoop('music_combat',   AU.cmb, musicGain);
+  startLoop('music_boss',     AU.bos, musicGain);
+  startLoop('amb_drone', AU.dry, 1.2);
+  startLoop('amb_wind',  AU.dry, 1.2);
   if (SFXBUF.music_ambient)  AU.genAmb = false;
   if (SFXBUF.music_combat)   AU.genCmb = false;
 }
@@ -3130,6 +3156,9 @@ addEventListener('keydown', ev => {
   if (ev.code === 'KeyH')  { debugOn = !debugOn;
                              document.getElementById('panel').style.display =
                                debugOn ? 'block' : 'none'; }
+  // music level by ear, without a rebuild — the H panel shows where it lands
+  if (ev.code === 'BracketLeft')  setMusicGain(musicGain / 1.4);
+  if (ev.code === 'BracketRight') setMusicGain(musicGain * 1.4);
 });
 
 function useDoor() {
@@ -3734,7 +3763,8 @@ function tick(now) {
     (debugOn ? '<br><span style="color:#4a4a46">' +
       'tile '+Z.tile+'m · wall '+(Z.wallH||Math.round(Z.tile*C.wallHMul))+'m · ' +
       'step '+Math.round(stepDuration())+'ms<br>' +
-      'cell '+P.x+','+P.y+' · facing '+FACE[P.face]+' · tick '+tickNo+' · '+fps+' fps</span>'
+      'cell '+P.x+','+P.y+' · facing '+FACE[P.face]+' · tick '+tickNo+' · '+fps+' fps<br>' +
+      audioLine() + '</span>'
     : '');
 }
 requestAnimationFrame(tick);
