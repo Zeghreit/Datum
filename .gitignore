@@ -12,6 +12,9 @@ _pv_*.png
 _ct_*.png
 _dg_*.png
 _trash*/
+# sound: the heavy originals from the generators stay out, the .ogg that
+# datum_audio.py makes from them goes in — it is what the build bakes, it is a
+# few hundred kb, and nothing in sfx/ can be regenerated from scratch.
 sfx/*.mp3
 sfx/*.wav
 sfx/*.m4a

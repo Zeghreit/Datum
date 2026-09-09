@@ -2181,7 +2181,7 @@ function buildProps(W, H, t, wallH) {
 // Signal path: sources -> dry -> master, with a parallel send into a dark
 // convolver so everything sounds like it is happening inside concrete.
 const AU = { ctx:null, master:null, dry:null, send:null, music:null, vol:0.55,
-             mode:'ambient', amb:null, cmb:null, apr:null,
+             mode:'ambient', amb:null, cmb:null, apr:null, bos:null,
              genAmb:true, genCmb:true };
 
 function auInit() {
@@ -2430,6 +2430,7 @@ function rewireLoops() {
   startLoop('music_ambient',  AU.amb, 1);
   startLoop('music_approach', AU.apr, 1);
   startLoop('music_combat',   AU.cmb, 1);
+  startLoop('music_boss',     AU.bos, 1);
   startLoop('amb_drone', AU.dry, 0.5);
   startLoop('amb_wind',  AU.dry, 0.5);
   if (SFXBUF.music_ambient)  AU.genAmb = false;
@@ -2581,6 +2582,7 @@ function startMusic() {
   AU.amb = c.createGain(); AU.amb.gain.value = 1; AU.amb.connect(AU.music);
   AU.cmb = c.createGain(); AU.cmb.gain.value = 0; AU.cmb.connect(AU.music);
   AU.apr = c.createGain(); AU.apr.gain.value = 0; AU.apr.connect(AU.music);
+  AU.bos = c.createGain(); AU.bos.gain.value = 0; AU.bos.connect(AU.music);
 
   // approach: one low note breathing, and a semitone above it that never
   // resolves. No pulse — the pulse is what arrives when it turns round.
@@ -2621,7 +2623,10 @@ function startMusic() {
   let step = 0;
 
   setInterval(() => {
-    if (!AU.ctx || AU.mode !== 'combat') return;
+    // The generative kit runs for ordinary fights, and stands in for the boss
+    // theme only while nothing has been supplied to cover that mode.
+    if (!AU.ctx || !AU.genCmb) return;
+    if (AU.mode !== 'combat' && !(AU.mode === 'boss' && !SFXBUF.music_boss)) return;
     const c2 = AU.ctx, t = c2.currentTime, k = step % 16;
     step++;
 
@@ -2699,15 +2704,21 @@ function startMusic() {
 function musicSet(mode) {
   if (!AU.ctx || !AU.amb || AU.mode === mode) return;
   AU.mode = mode;
-  const t = AU.ctx.currentTime, dur = mode === 'combat' ? 0.9 : 2.6;
+  const fast = mode === 'combat' || mode === 'boss';
+  const t = AU.ctx.currentTime, dur = fast ? 0.9 : 2.6;
   const set = (node, v) => {
+    if (!node) return;
     node.gain.cancelScheduledValues(t);
     node.gain.setValueAtTime(node.gain.value, t);
     node.gain.linearRampToValueAtTime(v, t + dur);
   };
+  // The boss has its own bus. With no sample for it the combat bus covers the
+  // mode instead, so the Cadaver is never fought in silence.
+  const boss = mode === 'boss', haveBoss = !!SFXBUF.music_boss;
   set(AU.amb, mode === 'ambient' ? 1 : mode === 'approach' ? 0.20 : 0.08);
   set(AU.apr, mode === 'approach' ? 1 : 0);
-  set(AU.cmb, mode === 'combat' ? 1 : 0);
+  set(AU.cmb, mode === 'combat' || (boss && !haveBoss) ? 1 : 0);
+  set(AU.bos, boss && haveBoss ? 1 : 0);
 }
 
 // ── Player state ───────────────────────────────────────────────
@@ -3640,7 +3651,13 @@ function tick(now) {
     const bosses = enemies.filter(e => e.hp > 0 && e.T && e.T.boss);
     const awake = bosses.some(e => !e.asleep);
     workshopOn = bosses.some(e => e.asleep);
-    musicSet(awake ? 'combat' : workshopOn ? 'approach' : 'ambient');
+    // Ordinary machines that have noticed you get the trance; the Cadaver and
+    // its two halves get their own theme. One is a fight with something that is
+    // doing its job, the other is the structure itself waking up.
+    const fight = enemies.some(e => e.hp > 0 && !(e.T && e.T.boss) &&
+      (e.alerted || (Math.abs(e.x - P.x) + Math.abs(e.y - P.y) <= C.aggro &&
+                     los(e.x, e.y, P.x, P.y))));
+    musicSet(awake ? 'boss' : fight ? 'combat' : workshopOn ? 'approach' : 'ambient');
   }
   rig.position.y += (eyeY() - rig.position.y) * 0.16;   // shells sit at different heights
   // no camera roll on damage — the hit reads on the portrait instead

@@ -13,15 +13,50 @@
 
 ## Где генерировать
 
+**Музыка — Gemini.** Проверено, работает. Он отдаёт трек не блобом, а обычной
+подписанной ссылкой в `<video>`, поэтому скачивать через браузер ничего не надо:
+
+```
+C:\Users\a.bodrov\Projects\assetforge\.venv\Scripts\python.exe build\datum_gemini_audio.py music_boss
+```
+
+Скрипт цепляется к работающему AssetForge-хрому по CDP, берёт последний плеер на
+открытой странице Gemini и кладёт файл в `sfx/` под нужным ключом. Просить надо
+именно «generate music, instrumental»: на короткий звуковой эффект Gemini
+отвечает, что в бете избегает немузыкальных запросов. Иногда срабатывает фильтр
+на «похоже на существующее произведение» — просто переформулировать и повторить.
+
+**Звуки — генераторы SFX.** Состояние на сентябрь 2026:
+
 | Сервис | Плюс | Минус |
 |---|---|---|
-| **elevenlabs.io/sound-effects** | лучшее качество, до 22 сек, коммерческие права | нужен аккаунт, бесплатный лимит |
-| **gensfx.com** | без регистрации | 2 попытки за раз |
-| **sunra.ai/ai-sound-effect-generator** | без регистрации и вотермарка | — |
-| **overchat.ai/audio/ai-sound-effect-generator** | без аккаунта, выбор моделей | — |
+| **aisfx.org** | работает, аккаунт уже есть | 20 бесплатных кредитов, промпт до 80 символов |
+| **elevenlabs.io/sound-effects** | лучшее качество | **скачивание не даёт** |
+| **gensfx.com** | — | **сломан**: кнопка не шлёт ни одного запроса |
+| **sunra.ai** | — | генератор за регистрацией, на странице только витрина |
+| **overchat.ai/audio/ai-sound-effect-generator** | без аккаунта, выбор моделей | не проверен |
 | **freesound.org** | живые записи, не генерация | нужен аккаунт, разные лицензии |
 
-Для музыки и петель лучше ElevenLabs — остальные плохо держат длину и зацикливание.
+Для удара, шага и лязга живая запись с freesound часто звучит лучше любой модели.
+
+## Что делать с файлом после генерации
+
+Не класть как есть. Генераторы отдают студийный вес, тишину в начале и
+случайную громкость, а петли у них не сходятся:
+
+```
+py build\datum_audio.py loop music_boss --xfade 4     # бесшовный цикл + уровень
+py build\datum_audio.py trim step clank hurt          # обрезка тишины + пик
+py build\datum_audio.py info                          # что сейчас в sfx/
+```
+
+`loop` режет файл до D−X секунд и накладывает последние X секунд исходника на
+первые X — конец файла переходит в собственное начало, потому что по обе стороны
+шва один и тот же материал. Кривые равной мощности, так что в середине склейки
+громкость не проваливается. Исходник не пропадает, он уезжает в `sfx/spare/`.
+
+Экономия заметная: четыре трека из Gemini весили 18 МБ, после `loop` — 2,6 МБ,
+на слух в игре не отличить (там всё равно 272p и реверб движка сверху).
 
 ---
 
@@ -80,15 +115,22 @@
 
 ## Музыка
 
-Три петли, движок сам их сводит.
+Четыре петли, движок сам их сводит. Все четыре сделаны и лежат в `sfx/`.
 
-| Ключ | Длина | Промпт |
+| Ключ | Когда играет | Промпт |
 |---|---|---|
-| `music_ambient` | 60 с, петля | dark ambient drone, slow unresolved minor chord, industrial and cold, no percussion, no melody, seamless loop |
-| `music_approach` | 45 с, петля | tense dark ambient, one low breathing note with a semitone above it that never resolves, no drums, dread, seamless loop |
-| `music_combat` | 60 с, петля | dark trance 140 bpm, four on the floor kick, acid bassline in D minor, dissonant pad, industrial, no vocals, seamless loop |
+| `music_ambient` | ходьба, никто не смотрит | dark ambient drone, slow unresolved minor chord, industrial and cold, no percussion, no melody |
+| `music_approach` | босс в цеху ещё спит | two sustained low tones a semitone apart held against each other, swelling and receding, distant metal hum, airless and cold |
+| `music_combat` | обычная машина тебя заметила | dark industrial trance 140 bpm, four on the floor, resonant acid bassline in D minor, cold dissonant pad, metallic percussion, no vocals, stays tense throughout |
+| `music_boss` | Кадавр проснулся, включая обе половины | slow crushing industrial ritual 96 bpm half-time, no drum kit — huge distant pile-hammer impacts on the downbeat, sub-bass drone in D, groaning metal, distorted low brass swells, dissonant semitone rub, like a derelict machine the size of a cathedral waking up |
 
-Как только появляется `music_ambient` или `music_combat`, генеративный слой под ним отключается сам.
+Разница между двумя боевыми не в громкости, а в смысле: транс — это драка с
+механизмом, который просто делает свою работу, а босс-тема — это просыпается
+сама структура. Поэтому у транса есть бит, а у босса его нет.
+
+Как только появляется `music_ambient` или `music_combat`, генеративный слой под
+ним отключается сам. Если `music_boss` нет, режим босса подхватывает боевую
+шину — в тишине Кадавра не дерутся никогда.
 
 ---
 
@@ -96,9 +138,10 @@
 
 Не всё сразу. Каждый файл слышен отдельно, так что имеет смысл идти от того, что звучит чаще.
 
+Музыка сделана целиком, дальше остаются только звуки:
+
 1. `step` — звучит чаще всего остального вместе взятого
 2. `clank`, `hurt`, `crush` — весь бой держится на них
 3. `roar` — единственное событие в секторе
-4. `music_combat` — вторая по заметности вещь после шага
-5. `amb_drone`, `amb_wind` — фон, на котором всё лежит
-6. остальное
+4. `amb_drone`, `amb_wind` — фон, на котором всё лежит
+5. остальное
