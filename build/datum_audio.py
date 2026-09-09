@@ -85,7 +85,7 @@ def install(src, tmp, key):
     return out
 
 
-def do_loop(key, xfade, lufs, q):
+def do_loop(key, xfade, lufs, q, take=0.0):
     src = find(key)
     if not src:
         print("  %-16s no file" % key)
@@ -94,6 +94,11 @@ def do_loop(key, xfade, lufs, q):
     if dur <= 0:
         print("  %-16s unreadable" % key)
         return
+    # --take keeps the opening and throws the rest away. The crossfade then
+    # closes that piece into itself, so a song becomes a loop of its own first
+    # minute rather than a three-minute tail nobody hears.
+    if take and take < dur:
+        dur = take
     x = min(xfade, dur / 3.0)
     body_end = dur - x
     chain = (
@@ -228,6 +233,8 @@ def main():
     s.add_argument("keys", nargs="+")
     s.add_argument("--xfade", type=float, default=4.0, help="crossfade seconds")
     s.add_argument("--lufs", type=float, default=-19.0, help="target loudness")
+    s.add_argument("--take", type=float, default=0.0,
+                   help="keep only the first N seconds, then loop that")
     s.add_argument("-q", type=int, default=2, help="vorbis quality (0..10)")
 
     s = sub.add_parser("trim", help="cut leading silence + peak match (one-shots)")
@@ -258,7 +265,7 @@ def main():
     print("ffmpeg %s" % os.path.basename(FF))
     for k in a.keys:
         if a.cmd == "loop":
-            do_loop(k, a.xfade, a.lufs, a.q)
+            do_loop(k, a.xfade, a.lufs, a.q, a.take)
         else:
             do_trim(k, a.peak, a.q)
 

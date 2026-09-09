@@ -72,12 +72,28 @@
   #vitals { position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
     display:flex; gap:10px; user-select:none;
     font-family: ui-monospace, Menlo, monospace; }
-  #vitals .cel { width:116px; opacity:.42; transition:opacity .1s linear;
+  /* Every shell reads as live — they all act on the same order now. Selection
+     is a frame, not a brightness: same cut corner and amber as the rest of the
+     panelling, with the inside edge doubled so it reads at a glance. */
+  #vitals .cel { position:relative; width:116px;
     background:var(--plate); border:1px solid var(--line2); padding:5px 5px 4px;
     clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px),
                        calc(100% - 10px) 100%, 0 100%, 0 10px); }
-  #vitals .cel.act { opacity:1; border-color:var(--amb); }
-  #vitals .cel.out { opacity:.22; }
+  #vitals .cel.act { border-color:var(--amb);
+    box-shadow: inset 0 0 0 1px var(--amb), inset 0 2px 0 0 var(--amb),
+                0 0 13px rgba(201,144,47,.16); }
+  #vitals .cel.out { opacity:.30; }
+
+  /* the two skills, above the portrait, in the order of their keys */
+  #vitals .sk { margin-bottom:3px; }
+  #vitals .sk div { display:flex; justify-content:space-between; font-size:10px;
+    letter-spacing:.1em; color:var(--dim); line-height:1.5; }
+  #vitals .sk div b { font-weight:normal; color:#4c4f55; }
+  #vitals .cel.act .sk div { color:var(--mid); }
+  #vitals .cel.act .sk div b { color:var(--amb); }
+  #vitals .sk div.fired { color:var(--amb); text-shadow:0 0 6px rgba(201,144,47,.5); }
+  #vitals .sk div.cool { color:#3f4147; }
+  #vitals .sk div.cool b { color:#3f4147; }
 
   #vitals .ico { height:14px; display:flex; justify-content:center; align-items:center; }
   #vitals .ico .clamp { display:none; font-size:11px; letter-spacing:.16em;
@@ -170,8 +186,9 @@
   @keyframes logIn { from { opacity:0; transform:translateX(6px) } to { opacity:1 } }
 
   /* ── key hints ─────────────────────────────────────────────── */
-  #keys { position:fixed; bottom:16px; left:18px; color:var(--dim); font-size:15px;
-    line-height:1.85; font-family:inherit; user-select:none; letter-spacing:.02em;
+  /* the party panel grew a skill row, so the hints have to stay out of its way */
+  #keys { position:fixed; bottom:16px; left:18px; color:var(--dim); font-size:13px;
+    line-height:1.7; font-family:inherit; user-select:none; letter-spacing:.02em;
     background:var(--plate); border:1px solid var(--line2); padding:8px 14px 8px 11px;
     border-left:2px solid var(--line);
     clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); }
@@ -272,10 +289,10 @@
 <div id="punish"></div>
 <div id="dead">A L L &nbsp; S H E L L S &nbsp; L O S T</div>
 <div id="keys">
-  <b>W A S D</b> step / strafe &nbsp; <b>Q E</b> turn &nbsp; <b>SPACE</b> act &nbsp; <b>X</b> hold<br>
-  <b>1 2 3 4</b> inhabit body &nbsp; <b>ENTER</b> print (on terminal)<br>
-  <b>ESC</b> shells &nbsp; <b>M</b> map mode<br>
-  <span style="color:#33332f">G reseed · TAB zone · H debug · drop a PNG to swap art</span>
+  <b>WASD</b> step &nbsp; <b>QE</b> turn, free &nbsp; <b>SPACE</b> all strike<br>
+  <b>1-4</b> select, free &nbsp; <b>F R</b> abilities &nbsp; <b>X</b> hold<br>
+  <b>ENTER</b> print &nbsp; <b>ESC</b> shells &nbsp; <b>M</b> map<br>
+  <span style="color:#33332f">G reseed · TAB zone · H debug · drop a PNG</span>
 </div>
 <div id="boss"></div>
 <div id="fade"></div>
@@ -955,6 +972,11 @@ function enemyTurn() {
       wakeBoss(e);
     }
     e.fx = e.x; e.fy = e.y; e.lunge = 0;
+    if (e.stun > 0) {                        // PIN: it spends the tick seized
+      e.stun--;
+      if (e.stun === 0) say(e.T.id + ' works itself loose', 'warn');
+      continue;
+    }
     const ai = e.T ? e.T.ai : 'fighter';
     if (ai === 'hauler')        aiHauler(e);
     else if (ai === 'surveyor') aiSurveyor(e);
@@ -1117,7 +1139,7 @@ function aiCadaver(e) {
         const free = freeShells();
         let pick = (!bodies[active].held && bodies[active].hp > 0 && free > 1)
           ? active : bodies.findIndex(b => b.hp > 0 && !b.held);
-        if (pick >= 0 && free > 1) {
+        if (pick >= 0 && free > 1 && !slips(pick)) {
           bodies[pick].held = true; e.holds = pick;
           SFX.seal(); say('CADAVER clamps <b>'+bodies[pick].k+'</b>', 'bad');
           if (pick === active) {
@@ -1215,6 +1237,7 @@ function aiSealer(e) {
     ? active
     : bodies.findIndex(b => b.hp > 0 && !b.held);
   if (pick < 0) { e.state = 'hold'; return; }
+  if (slips(pick)) { e.state = 'recover'; e.timer = C.recoverTicks; return; }
 
   bodies[pick].held = true;
   e.holds = pick;
@@ -1543,64 +1566,86 @@ function drawSwing(now) {
   fx2.restore();
 }
 
-function playerStrike() {
-  const b = A(); if (!b) return;
-  if (b.a.repair) {                          // Conduit: mends the worst shell, hits nothing
-    if (b.mends <= 0) {
-      swingFX(b.a.fx, false); bump();
-      say('<b>'+b.k+'</b> has nothing left to mend with', 'warn'); return;
-    }
-    const t = bodies.filter(v => v.hp > 0 && v !== b)
-                    .sort((x,y) => x.hp/x.a.integ - y.hp/y.a.integ)[0];
-    if (!t || t.hp >= t.a.integ) { swingFX(b.a.fx, false); bump(); return; }
-    b.mends--;
-    t.hp = Math.min(t.a.integ, t.hp + b.a.repair); drawVitals();
-    swingFX(b.a.fx, true); SFX.pulse();
-    say('<b>'+b.k+'</b> mends '+t.k+' — +'+b.a.repair+
-        ' · '+b.mends+' left', b.mends ? 'good' : 'warn');
-    const d = DIR[P.face];
-    burst(rig.position.x + d[0]*Z.tile*0.4, rig.position.y - 0.3,
-          rig.position.z + d[1]*Z.tile*0.4, 16, [0.35,0.9,0.45], 0.5, 1.6);
-    return;
-  }
+function frontEnemy() {
   const d = DIR[P.face];
-  const tx = P.x + d[0], ty = P.y + d[1];
-  const e = enemies.find(v => v.hp>0 && v.x===tx && v.y===ty);
-  if (!e) { swingFX(b.a.fx, false); SFX[b.a.fx](); bump();
-            say('<b>'+b.k+'</b> strikes nothing', 'dim'); return; }
+  return enemies.find(v => v.hp > 0 && v.x === P.x + d[0] && v.y === P.y + d[1]) || null;
+}
+
+// One place where damage lands on a machine, so a skill and a swing kill it the
+// same way. Everything that used to live at the bottom of playerStrike is here.
+function hitEnemy(e, dmg, big) {
+  if (!e || e.hp <= 0) return;
+  e.hp -= dmg; e.flash = performance.now();
+  impactLight(e.g.position.x, e.g.userData.height*0.55, e.g.position.z, big);
+  fxAt(e, big ? 34 : 16, big ? [1,0.95,0.8] : [1,0.62,0.22], big ? 3.4 : 1.9);
+  if (big) screenFlash(punishEl, '0.34', 160);
+  bumpT = performance.now();                 // the swing kicks the camera too
+  if (e.hp > 0) return;
+  if (e.T && e.T.phase1) { splitCadaver(e); return; }   // phase one comes apart
+
+  e.state = 'dead'; SFX.kill(); explode(e);
+  if (e.key) zstate().killed.add(e.key);
+  say(e.T.id+' destroyed — material +'+e.T.mat, 'good');
+  material = Math.min(6, material + (e.T ? e.T.mat : 1));
+
+  releaseClamps(e);
+  // the surviving half inherits the whole contradiction
+  if (e.T.boss) {
+    for (const o of enemies) if (o.hp > 0 && o.T && o.T.boss && !o.solo) {
+      o.solo = true; o.alerted = true; o.state = 'stalk';
+      say(o.T.id + ' takes the whole order', 'bad');
+    }
+  }
+}
+
+// SPACE is the whole party, not the shell you happen to be looking through.
+// Conduit included — it barely scratches, which is the point: its turn is
+// worth more spent on MEND, and now you can see that choice on the panel.
+function playerStrike() {
+  const team = bodies.filter(b => b.hp > 0 && !b.held);
+  if (!team.length) return;
+  const lead = A() && A().hp > 0 ? A() : team[0];
+  const e = frontEnemy();
+  if (!e) { swingFX(lead.a.fx, false); SFX[lead.a.fx](); bump();
+            say('the line strikes nothing', 'dim'); return; }
   if (e.T && e.T.ai === 'sealer' && bodies.some(v => v.held && v.hp > 0)) {
-    swingFX(b.a.fx, false); SFX.bump(); bump();
+    swingFX(lead.a.fx, false); SFX.bump(); bump();
     say('SEAL is armoured by what it holds', 'dim'); return;
   }
   const isPunish = e.state === 'recover' ||
                    (e.T && e.T.ai === 'sealer' && !bodies.some(v => v.held && v.hp > 0));
-  const dmg = b.a.dmg * C.dmgScale * (isPunish ? b.a.punish : 1);
-  e.hp -= dmg; e.flash = performance.now();
-  swingFX(b.a.fx, true); (isPunish ? SFX.crit : SFX.clank)();
-  say((isPunish ? 'punish · ' : '') + '<b>'+b.k+'</b> strikes '+e.T.id+' — '+Math.round(dmg),
-      isPunish ? 'good' : null);
-  impactLight(e.g.position.x, e.g.userData.height*0.55, e.g.position.z, isPunish);
-  fxAt(e, isPunish ? 34 : 16, isPunish ? [1,0.95,0.8] : [1,0.62,0.22], isPunish ? 3.4 : 1.9);
-  if (isPunish) screenFlash(punishEl, '0.34', 160);
-  bumpT = performance.now();                 // the swing kicks the camera too
-  if (e.hp <= 0) {
-    // phase one does not die, it comes apart
-    if (e.T && e.T.phase1) { splitCadaver(e); return; }
+  let total = 0;
+  for (const b of team) total += b.a.dmg * C.dmgScale * (isPunish ? b.a.punish : 1);
+  swingFX(lead.a.fx, true); (isPunish ? SFX.crit : SFX.clank)();
+  say((isPunish ? 'punish · ' : '') + team.length + ' strike ' + e.T.id +
+      ' — ' + Math.round(total), isPunish ? 'good' : null);
+  hitEnemy(e, total, isPunish);
+}
 
-    e.state = 'dead'; SFX.kill(); explode(e);
-    if (e.key) zstate().killed.add(e.key);
-    say(e.T.id+' destroyed — material +'+e.T.mat, 'good');
-    material = Math.min(6, material + (e.T ? e.T.mat : 1));
-
-    releaseClamps(e);
-    // the surviving half inherits the whole contradiction
-    if (e.T.boss) {
-      for (const o of enemies) if (o.hp > 0 && o.T && o.T.boss && !o.solo) {
-        o.solo = true; o.alerted = true; o.state = 'stalk';
-        say(o.T.id + ' takes the whole order', 'bad');
-      }
-    }
+// The selected shell spends the turn on one of its two abilities. Returns
+// false when nothing happened, so a misfire does not hand the turn over.
+function useSkill(slot) {
+  const b = A();
+  if (!b || b.hp <= 0) { bump(); return false; }
+  if (b.held) { say('<b>'+b.k+'</b> is clamped', 'warn'); bump(); return false; }
+  const sk = (SKILLS[b.k] || [])[slot];
+  if (!sk) { bump(); return false; }
+  if (b.cd[slot] > 0) {
+    say(sk.id + ' recharging — ' + b.cd[slot] + 't', 'warn'); bump(); return false;
   }
+  if (sk.use(b) === false) { bump(); drawVitals(); return false; }
+  b.cd[slot] = sk.cd + 1;            // +1: this turn's tick decrements it again
+  b.fired = slot; b.firedAt = tickNo;
+  drawVitals();
+  return true;
+}
+
+// Vector's evasion covers being grabbed as much as being hit.
+function slips(i) {
+  const b = bodies[i];
+  if (!b || b.dodge <= 0) return false;
+  say('<b>'+b.k+'</b> slips it', 'good'); SFX.bump();
+  return true;
 }
 
 // A dead machine cannot keep holding anything. Without this a shell stays
@@ -2801,8 +2846,82 @@ const ARCH = {
   BREACH:   { integ:60,  dmg:30, punish:2.2, eye:1.06, fx:'cut',    note:'cuts. thin.' },
   BALLAST:  { integ:150, dmg:10, punish:1.6, eye:0.86, fx:'slam',   note:'absorbs. slow.' },
   VECTOR:   { integ:80,  dmg:16, punish:4.5, eye:1.00, fx:'thrust', note:'waits for the opening.' },
-  CONDUIT:  { integ:70,  dmg:0,  punish:1,   eye:0.96, fx:'pulse', repair:34, mends:4,
-              note:'mends. cannot strike.' },
+  CONDUIT:  { integ:70,  dmg:4,  punish:1,   eye:0.96, fx:'pulse', repair:34,
+              note:'mends. barely strikes.' },
+};
+
+// Every shell swings on SPACE, so choosing one is no longer about who hits —
+// it is about whose two abilities are off cooldown. That is the whole reason
+// to look down at the party, and it is why selection costs nothing.
+const SKILLS = {
+  BALLAST: [
+    { id:'BULWARK', cd:5, txt:'shield all 2t', use: b => {
+        for (const v of bodies) if (v.hp > 0) v.shield = 2;
+        SFX.slam(); swingFX('slam', true);
+        say('<b>'+b.k+'</b> braces the line — plating holds 2 ticks', 'good');
+        return true; } },
+    { id:'PIN', cd:5, txt:'stun one 2t', use: b => {
+        const e = frontEnemy();
+        if (!e) { say('nothing in front to pin', 'dim'); return false; }
+        e.stun = 2; e.state = 'recover'; e.timer = Math.max(e.timer||0, 2);
+        SFX.clank(); swingFX('slam', true);
+        say('<b>'+b.k+'</b> pins '+e.T.id+' — seized 2 ticks', 'good');
+        return true; } },
+  ],
+  BREACH: [
+    { id:'SUNDER', cd:6, txt:'heavy, one', use: b => {
+        const e = frontEnemy();
+        if (!e) { say('nothing in front to open', 'dim'); return false; }
+        swingFX('cut', true); SFX.crit();
+        hitEnemy(e, b.a.dmg * C.dmgScale * 2.5, true);
+        say('<b>'+b.k+'</b> opens '+e.T.id+' up', 'good');
+        return true; } },
+    { id:'SWEEP', cd:6, txt:'all adjacent', use: b => {
+        const near = enemies.filter(e => e.hp > 0 &&
+          Math.max(Math.abs(e.x-P.x), Math.abs(e.y-P.y)) <= 1);
+        if (!near.length) { say('nothing within reach', 'dim'); return false; }
+        swingFX('cut', true); SFX.cut();
+        for (const e of near) hitEnemy(e, b.a.dmg * C.dmgScale, false);
+        say('<b>'+b.k+'</b> sweeps — '+near.length+' caught', 'good');
+        return true; } },
+  ],
+  VECTOR: [
+    { id:'LANCE', cd:5, txt:'reach 3', use: b => {
+        const d = DIR[P.face];
+        let e = null;
+        for (let n = 1; n <= 3 && !e; n++) {
+          const x = P.x + d[0]*n, y = P.y + d[1]*n;
+          if (!isWalk(x, y)) break;                     // it does not reach through walls
+          e = enemies.find(v => v.hp > 0 && v.x === x && v.y === y) || null;
+        }
+        if (!e) { say('no line to anything', 'dim'); return false; }
+        swingFX('thrust', true); SFX.thrust();
+        hitEnemy(e, b.a.dmg * C.dmgScale * 1.4, false);
+        say('<b>'+b.k+'</b> reaches '+e.T.id+' from cover', 'good');
+        return true; } },
+    { id:'SLIP', cd:5, txt:'evade 2t', use: b => {
+        b.dodge = 2; SFX.swap();
+        say('<b>'+b.k+'</b> stops standing still — evading 2 ticks', 'good');
+        return true; } },
+  ],
+  CONDUIT: [
+    { id:'MEND', cd:5, txt:'heal one', use: b => {
+        const t = bodies.filter(v => v.hp > 0 && v.hp < v.a.integ)
+                        .sort((x,y) => x.hp/x.a.integ - y.hp/y.a.integ)[0];
+        if (!t) { say('nothing to mend', 'dim'); return false; }
+        t.hp = Math.min(t.a.integ, t.hp + b.a.repair);
+        t.dirty = true; swingFX('pulse', true); SFX.pulse();
+        say('<b>'+b.k+'</b> mends '+t.k+' — +'+b.a.repair, 'good');
+        return true; } },
+    { id:'WASH', cd:5, txt:'heal all, half', use: b => {
+        const t = bodies.filter(v => v.hp > 0 && v.hp < v.a.integ);
+        if (!t.length) { say('nothing to mend', 'dim'); return false; }
+        const amt = Math.round(b.a.repair / 2);
+        for (const v of t) { v.hp = Math.min(v.a.integ, v.hp + amt); v.dirty = true; }
+        swingFX('pulse', true); SFX.pulse();
+        say('<b>'+b.k+'</b> washes the line — +'+amt+' to '+t.length, 'good');
+        return true; } },
+  ],
 };
 const LOADOUT = ['BALLAST','BREACH','VECTOR','CONDUIT'];
 
@@ -2851,11 +2970,20 @@ let portraitSize = [40, 40];
 
 function resetBodies() {
   bodies = LOADOUT.map(k => ({ k, a:ARCH[k], hp:ARCH[k].integ, held:false,
-                               mends: ARCH[k].mends || 0 }));
+                               cd:[0,0], shield:0, dodge:0, fired:-1, firedAt:-9 }));
   active = 0;
   vitalsEl.innerHTML = '';
   bodies.forEach((b,i) => {
     const cel = document.createElement('div'); cel.className = 'cel';
+    // the two abilities, above the portrait, keyed F and R
+    const sk = document.createElement('div'); sk.className = 'sk';
+    (SKILLS[b.k] || []).forEach((s, n) => {
+      const row = document.createElement('div');
+      row.innerHTML = '<span><b>' + (n ? 'R' : 'F') + '</b> ' + s.id + '</span>' +
+                      '<span class="cdv"></span>';
+      sk.appendChild(row);
+    });
+    cel.appendChild(sk);
     const ic = document.createElement('div'); ic.className = 'ico';
     ic.innerHTML = '<span class="clamp">CLAMPED</span>'; cel.appendChild(ic);
     const pf = document.createElement('div'); pf.className = 'pf';
@@ -2948,7 +3076,16 @@ function drawVitals() {
     cel.querySelector('i').style.width = Math.max(0, b.hp/b.a.integ*100) + '%';
     cel.querySelector('.hpv').textContent = Math.max(0, Math.round(b.hp));
     const nm = cel.querySelector('.nm');
-    if (nm) nm.textContent = b.a.mends ? b.k + ' \u00d7' + b.mends : b.k;
+    if (nm) nm.textContent = b.k + (b.shield > 0 ? ' ■' : '') +
+                                   (b.dodge  > 0 ? ' →' : '');
+    // fired this turn: amber. counting down: dim, with the ticks left.
+    const rows = cel.querySelectorAll('.sk div');
+    rows.forEach((row, n) => {
+      const cd = (b.cd && b.cd[n]) || 0;
+      row.className = b.fired === n ? 'fired' : (cd > 0 ? 'cool' : '');
+      const cdv = row.querySelector('.cdv');
+      if (cdv) cdv.textContent = cd > 0 ? cd : '';
+    });
   });
 }
 
@@ -2960,6 +3097,9 @@ function damagePlayer(d) { damageShell(active, d); }
 
 function damageShell(i, d, src) {
   const b = bodies[i]; if (!b || b.hp <= 0) return;
+  if (b.dodge > 0) { say('<b>'+b.k+'</b> is not where the blow went', 'good');
+                     SFX.bump(); return; }
+  if (b.shield > 0) d *= 0.35;               // BULWARK: plating, not immunity
   b.hp = Math.max(0, b.hp - d); hurtT = performance.now();
   (src === 'crush' ? SFX.crush : SFX.hurt)();
   b.glitch = hurtT; b.dirty = true; b.shake = true;
@@ -3002,9 +3142,9 @@ function inhabit(i) {
     say('tore <b>'+bodies[i].k+'</b> loose', 'good');
     return;
   }
-  if (i === active) { bump(); return; }
+  if (i === active) return;                  // already the one you are steering
   active = i; drawVitals(); SFX.swap();
-  say('inhabiting <b>'+bodies[i].k+'</b>', 'dim');
+  say('steering <b>'+bodies[i].k+'</b>', 'dim');
 }
 
 function printBodies() {                    // stand on a terminal, spend material
@@ -3107,8 +3247,17 @@ function updateAnim(now) {
     }
   }
   if (tickClock && now - tickClock.t0 >= tickClock.dur) {
-    tickClock = null; tickBusy = false;
-    if (queued) { const q = queued; queued = null; dispatch(q); }
+    const c = tickClock; tickClock = null;
+    if (c.enemy) {                           // your beat is over — theirs starts
+      try { enemyTurn(); }
+      catch (err) { say('AI ERROR · ' + err.message, 'bad'); console.error(err); }
+      cooldownTick();
+      tickClock = { t0: performance.now(), dur: Math.max(110, C.turnDur * 0.85) };
+      tickBusy = true;
+    } else {
+      tickBusy = false;
+      if (queued) { const q = queued; queued = null; dispatch(q); }
+    }
   }
   if (tickBusy && !tickClock) tickBusy = false;      // watchdog
   const bk = (now - bumpT) / 150;
@@ -3119,31 +3268,57 @@ function updateAnim(now) {
   }
 }
 
-function dispatch(a) {
-  if (bootEl || menuOpen || tickBusy || !alive()) { queued = a; return; }
-  const dur = (a==='TL'||a==='TR') ? C.turnDur
-            : (a[0]==='B' && a.length===2) ? C.turnDur : stepDuration();
+// Cooldowns and the two-tick states run down once per exchange, after the
+// machines have had their answer. Set 2 and it covers exactly two of theirs.
+function cooldownTick() {
+  for (const b of bodies) {
+    if (!b.cd) continue;
+    for (let s = 0; s < b.cd.length; s++) if (b.cd[s] > 0) b.cd[s]--;
+    if (b.shield > 0) b.shield--;
+    if (b.dodge  > 0) b.dodge--;
+    b.fired = -1;                            // amber only for the tick it fired
+  }
+  drawVitals();
+}
 
+function dispatch(a) {
+  if (bootEl || menuOpen || !alive()) { queued = a; return; }
+
+  // Turning where you stand is not an event in the world, and neither is
+  // deciding whose ability you want — both used to cost a tick, and that is
+  // what made a fight a shuffle rather than an exchange.
+  if (a === 'TL' || a === 'TR') {
+    if (anim) { queued = a; return; }
+    tryTurn(a === 'TL' ? -1 : 1);
+    return;
+  }
+  if (a[0] === 'B' && a.length === 2) { inhabit(+a[1]); return; }
+
+  if (tickBusy) { queued = a; return; }
+
+  let spent = true;
   if (a === 'F') tryMove(0); else if (a === 'B') tryMove(2);
   else if (a === 'L') tryMove(3); else if (a === 'R') tryMove(1);
-  else if (a === 'TL') tryTurn(-1); else if (a === 'TR') tryTurn(1);
   else if (a === 'ATK') playerStrike();
+  else if (a === 'S0') spent = useSkill(0);
+  else if (a === 'S1') spent = useSkill(1);
   else if (a === 'PRINT') { const f = facing();
                             (f && (f.c === 'D' || f.c === 'B')) ? useDoor() : printBodies(); }
-  else if (a[0] === 'B' && a.length === 2) inhabit(+a[1]);
   else if (a === 'HOLD') { /* bait. costs a tick like everything else. */ }
+  if (!spent) return;                        // a misfire does not hand the turn over
 
+  // You act, it lands, and only then do they answer. The two beats used to sit
+  // on top of each other, which is why nothing read as a reply to anything.
   tickNo++;
-  tickClock = { t0: performance.now(), dur };
+  tickClock = { t0: performance.now(), dur: stepDuration(), enemy: true };
   tickBusy = true;
-  try { enemyTurn(); }
-  catch (err) { say('AI ERROR · ' + err.message, 'bad'); console.error(err); }
 }
 
 // ── Input ──────────────────────────────────────────────────────
 const MAP = { KeyW:'F', ArrowUp:'F', KeyS:'B', ArrowDown:'B', KeyA:'L', KeyD:'R',
               KeyQ:'TL', ArrowLeft:'TL', KeyE:'TR', ArrowRight:'TR',
               Space:'ATK', KeyX:'HOLD', Enter:'PRINT',
+              KeyF:'S0', KeyR:'S1',
               Digit1:'B0', Digit2:'B1', Digit3:'B2', Digit4:'B3' };
 addEventListener('keydown', ev => {
   if (bootEl) { ev.preventDefault(); endBoot(); return; }
