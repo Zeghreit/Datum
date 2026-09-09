@@ -121,12 +121,14 @@ py build\datum_audio.py info                          # что сейчас в s
 |---|---|---|
 | `music_ambient` | ходьба, никто не смотрит | dark ambient drone, slow unresolved minor chord, industrial and cold, no percussion, no melody |
 | `music_approach` | босс в цеху ещё спит | two sustained low tones a semitone apart held against each other, swelling and receding, distant metal hum, airless and cold |
-| `music_combat` | обычная машина тебя заметила | dark industrial trance 140 bpm, four on the floor, resonant acid bassline in D minor, cold dissonant pad, metallic percussion, no vocals, stays tense throughout |
+| `music_combat` | **сейчас ничего не включает** — шина и генеративный кит на месте, триггера нет | dark industrial trance 140 bpm, four on the floor, resonant acid bassline in D minor, cold dissonant pad, metallic percussion, no vocals, stays tense throughout |
 | `music_boss` | Кадавр проснулся, включая обе половины | slow crushing industrial ritual 96 bpm half-time, no drum kit — huge distant pile-hammer impacts on the downbeat, sub-bass drone in D, groaning metal, distorted low brass swells, dissonant semitone rub, like a derelict machine the size of a cathedral waking up |
 
-Разница между двумя боевыми не в громкости, а в смысле: транс — это драка с
-механизмом, который просто делает свою работу, а босс-тема — это просыпается
-сама структура. Поэтому у транса есть бит, а у босса его нет.
+Стычки в коридорах музыку не меняют — они идут под эмбиентом. Пробовали иначе:
+транс включался, когда обычная машина тебя замечала, и это оказалось неверно.
+Сектор молчит по умолчанию, и единственное, что должно нарушать молчание, —
+Кадавр. Поэтому у босс-темы нет бита: она не «бой начался», она «структура
+проснулась».
 
 Как только появляется `music_ambient` или `music_combat`, генеративный слой под
 ним отключается сам. Если `music_boss` нет, режим босса подхватывает боевую
