@@ -2395,6 +2395,29 @@ const SYNTH = {
 const SFXBUF = {};                 // key -> AudioBuffer
 const LOOPS  = {};                 // key -> { src, gain }
 
+// A window onto the audio graph, because none of this can be judged by reading
+// the source — open the console and ask DBG what actually got wired.
+window.DBG = { get au() { return AU; }, get buf() { return SFXBUF; },
+               get loops() { return LOOPS; },
+               state() {
+                 return { ctx: AU.ctx && AU.ctx.state, mode: AU.mode,
+                   master: AU.master && AU.master.gain.value,
+                   music: AU.music && AU.music.gain.value,
+                   bus: AU.amb ? { amb: AU.amb.gain.value, apr: AU.apr.gain.value,
+                                   cmb: AU.cmb.gain.value, bos: AU.bos.gain.value }
+                              : 'no buses',
+                   decoded: Object.keys(SFXBUF).length,
+                   loops: Object.keys(LOOPS),
+                   gen: { amb: AU.genAmb, cmb: AU.genCmb } };
+               },
+               // dial the supplied loops live instead of rebuilding to taste:
+               // DBG.music(5) in the console, then tell me the number
+               music(x) {
+                 for (const k in LOOPS)
+                   if (k.indexOf('music_') === 0) LOOPS[k].gain.gain.value = x;
+                 return x;
+               } };
+
 function playBuf(key, gain) {
   const b = SFXBUF[key]; if (!b || !AU.ctx) return;
   const src = AU.ctx.createBufferSource(); src.buffer = b;
@@ -2432,12 +2455,17 @@ async function loadSound(key, data) {
 // fired. A supplied loop silences the generative layer it replaces.
 function rewireLoops() {
   if (!AU.ctx || !AU.amb) return;
-  startLoop('music_ambient',  AU.amb, 1);
-  startLoop('music_approach', AU.apr, 1);
-  startLoop('music_combat',   AU.cmb, 1);
-  startLoop('music_boss',     AU.bos, 1);
-  startLoop('amb_drone', AU.dry, 0.5);
-  startLoop('amb_wind',  AU.dry, 0.5);
+  // The generative layer is a handful of oscillators at gains around 0.05, so
+  // the music bus sits at 0.34 to suit it. A mastered file mixed to −19 LUFS
+  // comes through that same bus about fifteen decibels under where the synth
+  // sits — decoded, wired, running and inaudible. Samples get their own lift.
+  const M = 3.5, A = 1.2;
+  startLoop('music_ambient',  AU.amb, M);
+  startLoop('music_approach', AU.apr, M);
+  startLoop('music_combat',   AU.cmb, M);
+  startLoop('music_boss',     AU.bos, M);
+  startLoop('amb_drone', AU.dry, A);
+  startLoop('amb_wind',  AU.dry, A);
   if (SFXBUF.music_ambient)  AU.genAmb = false;
   if (SFXBUF.music_combat)   AU.genCmb = false;
 }
@@ -2500,6 +2528,7 @@ let workshopOn = false, workshopTimer = null;
 
 function hammerBlow(far) {
   const g = far ? 0.075 : 0.13;
+  if (SFXBUF.hammer) return playBuf('hammer', far ? 0.35 : 0.7);
   thud(3.4, g, 0.9);
   clank(3.0, g * 0.8, 0.95);
   setTimeout(() => nz(0.9, 420, 90, 1.1, g * 0.4, 'lowpass', 0.95), 70);
@@ -2507,6 +2536,7 @@ function hammerBlow(far) {
 
 function sawWhine() {
   if (!AU.ctx) return;
+  if (SFXBUF.saw) return playBuf('saw', 0.5);
   const c = AU.ctx, t = c.currentTime, dur = 1.6 + Math.random() * 1.4;
   const o = c.createOscillator(); o.type = 'sawtooth';
   o.frequency.setValueAtTime(180, t);
@@ -2542,6 +2572,10 @@ scheduleWorkshop();
 // The roar. Not an animal — a machine changing task badly.
 function bossRoar() {
   if (!AU.ctx) return;
+  // The one cue that had its own hand-written function and so quietly ignored
+  // the sample bank — a supplied roar was decoded, sat in SFXBUF and never
+  // played. Same trap as hammerBlow and sawWhine above.
+  if (SFXBUF.roar) return playBuf('roar', 1.0);
   const c = AU.ctx, t = c.currentTime;
   for (const [f0, f1, d, g] of [[62, 28, 2.4, 0.30], [93, 41, 2.0, 0.18]]) {
     const o = c.createOscillator(); o.type = 'sawtooth';
