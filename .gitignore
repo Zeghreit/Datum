@@ -12,3 +12,7 @@ _pv_*.png
 _ct_*.png
 _dg_*.png
 _trash*/
+sfx/*.mp3
+sfx/*.wav
+sfx/*.m4a
+sfx/spare/
