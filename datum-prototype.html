@@ -1,0 +1,3690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DATUM — step-crawler prototype</title>
+<style>
+  /* ── DATUM interface ────────────────────────────────────────────
+     Rules taken from the reference sheets, minus the decoration:
+       · corners are CUT at 45 degrees, never rounded, and never all four
+       · frames are hairlines; where a full frame is too loud, use corner ticks
+       · bars are SEGMENTED — the empty part stays visible as hatching
+       · every block carries a service code, small and dim and meaningless
+       · amber is the only colour, and only where it means something
+     No fake telemetry, no spinning rings, no invented numbers.        */
+
+  :root {
+    --ink:   #05060700;
+    --plate: rgba(7,8,9,.86);
+    --line:  #24262a;
+    --line2: #14161a;
+    --dim:   #6f737a;
+    --mid:   #a7abb3;
+    --hi:    #eeebe4;
+    --amb:   #e8a63c;
+    --bad:   #e0563a;
+    --good:  #a2d68a;
+    --cut:   9px;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:#000; overflow:hidden;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  canvas { display:block; }
+
+  /* the shared surface: a plate with two corners cut off */
+  .pl {
+    background: var(--plate);
+    border: 1px solid var(--line);
+    clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)),
+                       calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  }
+  .pl.alt {
+    clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut),
+                       100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  }
+  /* service code, bottom right of a plate */
+  .code { position:absolute; right:6px; bottom:3px; font-size:10px; letter-spacing:.22em;
+    color:#4c5057; pointer-events:none; }
+
+  /* segmented bar: filled part solid, empty part still visible as hatching */
+  .seg { position:relative; height:7px; overflow:hidden;
+    background:
+      repeating-linear-gradient(115deg, #191b1f 0 3px, transparent 3px 7px),
+      #0b0c0e;
+    border:1px solid var(--line2); }
+  .seg > i { display:block; height:100%; transition:width .12s linear;
+    background:
+      repeating-linear-gradient(115deg, var(--hi) 0 4px, transparent 4px 7px),
+      linear-gradient(var(--hi), var(--hi)); }
+
+  #hud { position:fixed; top:16px; left:18px; padding:9px 16px 9px 13px;
+    color:var(--mid); font-size:16px; line-height:1.7; letter-spacing:.03em;
+    background:var(--plate); border-left:2px solid var(--amb);
+    border-top:1px solid var(--line); border-right:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%); }
+  #hud b { color:var(--hi); font-weight:500; }
+  #hud .amber { color:var(--amb); }
+
+  /* ── party ─────────────────────────────────────────────────── */
+  #vitals { position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+    display:flex; gap:10px; user-select:none;
+    font-family: ui-monospace, Menlo, monospace; }
+  #vitals .cel { width:116px; opacity:.42; transition:opacity .1s linear;
+    background:var(--plate); border:1px solid var(--line2); padding:5px 5px 4px;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px),
+                       calc(100% - 10px) 100%, 0 100%, 0 10px); }
+  #vitals .cel.act { opacity:1; border-color:var(--amb); }
+  #vitals .cel.out { opacity:.22; }
+
+  #vitals .ico { height:14px; display:flex; justify-content:center; align-items:center; }
+  #vitals .ico .clamp { display:none; font-size:11px; letter-spacing:.16em;
+    color:#0a0b0c; background:var(--bad); padding:1px 7px;
+    clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+  #vitals .cel.held .ico .clamp { display:inline-block; }
+
+  #vitals .pf { position:relative; line-height:0; }
+  #vitals .cel.hit .pf { animation: shellHit .34s steps(9) 1; }
+  @keyframes shellHit {
+    0%   { transform: translate( 0px, 0px) }
+    12%  { transform: translate(-4px, 2px) }
+    25%  { transform: translate( 3px,-3px) }
+    37%  { transform: translate(-3px,-1px) }
+    50%  { transform: translate( 2px, 3px) }
+    62%  { transform: translate(-2px, 1px) }
+    75%  { transform: translate( 2px,-1px) }
+    87%  { transform: translate(-1px, 1px) }
+    100% { transform: translate( 0px, 0px) }
+  }
+  #vitals canvas { display:block; width:104px; height:104px; image-rendering:pixelated;
+    background:#0a0b0c; }
+  /* corner ticks instead of a full frame */
+  #vitals .pf::before, #vitals .pf::after { content:''; position:absolute; width:13px;
+    height:13px; border:1px solid var(--dim); pointer-events:none; }
+  #vitals .pf::before { left:0; top:0; border-right:0; border-bottom:0; }
+  #vitals .pf::after  { right:0; bottom:0; border-left:0; border-top:0; }
+  #vitals .cel.act .pf::before, #vitals .cel.act .pf::after { border-color:var(--amb); }
+  #vitals .cel.held .pf::before, #vitals .cel.held .pf::after { border-color:var(--bad); }
+
+  #vitals .noent { display:none; position:absolute; left:50%; top:50%; width:58px;
+    height:58px; margin:-29px 0 0 -29px; border:3px solid var(--bad); border-radius:50%;
+    box-shadow:0 0 0 2px rgba(0,0,0,.6), inset 0 0 0 2px rgba(0,0,0,.6); }
+  #vitals .noent::after { content:''; position:absolute; left:-3px; top:24px; width:58px;
+    height:3px; background:var(--bad); transform:rotate(-45deg);
+    box-shadow:0 0 0 2px rgba(0,0,0,.6); }
+  #vitals .cel.held .noent { display:block; }
+
+  #vitals .off { display:none; position:absolute; left:0; right:0; bottom:7px;
+    text-align:center; font-size:14px; letter-spacing:.24em; color:var(--bad);
+    text-shadow:0 0 5px #000, 0 0 2px #000; }
+  #vitals .cel.out .off { display:block; }
+
+  #vitals .bar { margin-top:5px; }
+  #vitals .cel.act .seg > i { background:
+      repeating-linear-gradient(115deg, #efeade 0 4px, transparent 4px 7px),
+      linear-gradient(#efeade, #efeade); }
+  #vitals .cel.low .seg > i { background:
+      repeating-linear-gradient(115deg, var(--amb) 0 4px, transparent 4px 7px),
+      linear-gradient(var(--amb), var(--amb)); }
+  #vitals .cel.out .seg > i { background:#38201c; }
+
+  #vitals .nm { font-size:13px; letter-spacing:.12em; color:var(--mid); text-align:center;
+    margin-top:4px; }
+  #vitals .cel.act .nm { color:var(--amb); }
+  #vitals .cel.out .nm { color:#5a3a36; }
+  #vitals .n { font-size:12px; color:var(--dim); letter-spacing:.05em; margin-top:1px;
+    display:flex; justify-content:space-between; }
+
+  /* ── boss ──────────────────────────────────────────────────── */
+  #boss { position:fixed; top:20px; left:50%; transform:translateX(-50%); width:540px;
+    display:none; user-select:none; pointer-events:none;
+    font-family: ui-monospace, Menlo, monospace; }
+  #boss .bn { font-size:14px; letter-spacing:.34em; color:var(--bad); text-align:center;
+    margin-bottom:9px; text-shadow:0 0 7px #000; }
+  #boss .row { display:flex; align-items:center; gap:9px; margin-bottom:6px; }
+  #boss .lbl { font-size:12px; letter-spacing:.18em; color:var(--mid); width:66px;
+    text-shadow:0 0 4px #000; }
+  #boss .seg { flex:1; height:9px; }
+  #boss .seg > i { background:
+      repeating-linear-gradient(115deg, var(--bad) 0 5px, transparent 5px 9px),
+      linear-gradient(var(--bad), var(--bad)); }
+  #boss .row.gone .lbl { color:#33353a; }
+  #boss .row.gone .seg > i { background:#301c18; }
+
+  /* ── log ───────────────────────────────────────────────────── */
+  #log { position:fixed; bottom:16px; right:18px; width:400px;
+    display:flex; flex-direction:column; align-items:flex-end;
+    font-family: ui-monospace, Menlo, monospace; font-size:15px; line-height:1.6;
+    user-select:none; pointer-events:none; }
+  #log div { color:var(--mid); animation:logIn .18s linear; display:inline-block;
+    background:var(--plate); padding:2px 9px 2px 11px; margin-top:2px;
+    border-left:1px solid var(--line);
+    clip-path: polygon(7px 0, 100% 0, 100% 100%, 0 100%, 0 7px); }
+  #log div.dim  { color:#6a6e75; }
+  #log div.warn { color:var(--amb); }
+  #log div.good { color:var(--good); }
+  #log div.bad  { color:var(--bad); border-left-color:var(--bad); }
+  #log div b { color:var(--hi); font-weight:500; }
+  @keyframes logIn { from { opacity:0; transform:translateX(6px) } to { opacity:1 } }
+
+  /* ── key hints ─────────────────────────────────────────────── */
+  #keys { position:fixed; bottom:16px; left:18px; color:var(--dim); font-size:15px;
+    line-height:1.85; font-family:inherit; user-select:none; letter-spacing:.02em;
+    background:var(--plate); border:1px solid var(--line2); padding:8px 14px 8px 11px;
+    border-left:2px solid var(--line);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); }
+  #keys b { color:var(--mid); font-weight:500; }
+
+  #mini { position:fixed; bottom:196px; right:18px; border:1px solid var(--line);
+    background:rgba(7,8,9,.84);
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
+                       calc(100% - 12px) 100%, 0 100%, 0 12px); }
+
+  #fxc { position:fixed; inset:0; pointer-events:none; }
+  #flash { position:fixed; inset:0; pointer-events:none; opacity:0;
+    box-shadow: inset 0 0 130px 34px rgba(192,60,30,.85); }
+  #punish { position:fixed; inset:0; pointer-events:none; opacity:0; background:#fff; }
+  #fade { position:fixed; inset:0; background:#000; pointer-events:none; opacity:0;
+    transition:opacity .18s linear; }
+  #dead { position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    color:var(--mid); font-size:16px; letter-spacing:.26em;
+    font-family: ui-monospace, Menlo, monospace; }
+
+  /* ── tuning panel (debug) ──────────────────────────────────── */
+  #panel { position:fixed; top:16px; right:18px; width:250px; background:rgba(6,7,8,.88);
+    border:1px solid var(--line); padding:12px 13px 10px; backdrop-filter:blur(3px);
+    color:var(--mid); font-size:13px; line-height:1.55; letter-spacing:.02em;
+    clip-path: polygon(11px 0, 100% 0, 100% calc(100% - 11px),
+                       calc(100% - 11px) 100%, 0 100%, 0 11px); }
+  #panel h2 { font-size:12px; font-weight:500; color:var(--dim); margin:0 0 10px;
+    letter-spacing:.24em; }
+  #panel label { display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:5px; color:#6d7076; }
+  #panel label span:last-child { color:var(--amb); font-variant-numeric:tabular-nums; }
+  #panel input[type=range] { width:100%; height:2px; margin:0 0 9px; -webkit-appearance:none;
+    appearance:none; background:#262a2e; outline:none; }
+  #panel input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:9px;
+    height:9px; background:var(--amb); cursor:pointer; }
+  #panel input[type=range]::-moz-range-thumb { width:9px; height:9px; border:0;
+    background:var(--amb); cursor:pointer; }
+
+  /* ── prologue ──────────────────────────────────────────────── */
+  #boot { position:fixed; inset:0; background:#000; z-index:60; display:flex;
+    align-items:center; justify-content:center;
+    font-family: ui-monospace, Menlo, monospace; }
+  #bootbox { width:min(1120px,88vw); font-size:34px; line-height:1.9; color:#6e7178;
+    letter-spacing:.05em; }
+  #bootbox .ln { opacity:0; animation:bootin .5s linear forwards; }
+  #bootbox i { font-style:normal; color:#3c3f44; display:inline-block; width:min(480px,42vw);
+    letter-spacing:.10em; }
+  #bootbox b { color:var(--amb); font-weight:500; }
+  #bootbox .d { color:var(--mid); }
+  #bootbox .big { color:var(--amb); font-size:42px; letter-spacing:.06em; }
+  #bootbox .q { color:var(--dim); font-size:30px; }
+  #bootskip { position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    font:16px ui-monospace,Menlo,monospace; color:#33353a; letter-spacing:.26em; }
+  @keyframes bootin { from { opacity:0 } to { opacity:1 } }
+
+  /* ── shell selection ───────────────────────────────────────── */
+  #menu { position:fixed; inset:0; background:rgba(4,5,6,.95); z-index:50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-family: ui-monospace, Menlo, monospace; color:var(--mid); }
+  #menu h1 { font-size:15px; font-weight:500; letter-spacing:.38em; color:var(--amb);
+    margin-bottom:7px; }
+  #menu .sub { font-size:13px; color:var(--dim); letter-spacing:.12em; margin-bottom:24px;
+    max-width:540px; text-align:center; line-height:1.8; }
+  #grid { display:grid; grid-template-columns:repeat(4,138px); gap:11px; }
+  .slot { position:relative; border:1px solid var(--line2); background:rgba(8,9,10,.9);
+    padding:9px; cursor:pointer; transition:border-color .1s linear;
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px),
+                       calc(100% - 12px) 100%, 0 100%, 0 12px); }
+  .slot canvas { display:block; width:120px; height:120px; image-rendering:pixelated;
+    background:#0a0b0c; }
+  .slot .nm { font-size:13px; letter-spacing:.14em; color:var(--hi); margin-top:7px; }
+  .slot .st { font-size:12px; color:var(--dim); margin-top:4px; line-height:1.55; }
+  .slot .st b { color:var(--mid); font-weight:500; }
+  .slot.pick { border-color:var(--amb); }
+  .slot.pick .nm { color:var(--amb); }
+  .slot.lock { cursor:not-allowed; opacity:.30; }
+  .slot.lock .nm { color:var(--dim); }
+  #graft { margin-top:16px; width:597px; border:1px solid var(--line2);
+    background:rgba(8,9,10,.9); padding:11px 14px; opacity:.42; position:relative;
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px)); }
+  #graft .h { font-size:13px; letter-spacing:.18em; color:var(--dim); }
+  #graft .b { font-size:12px; color:#5a5e65; margin-top:5px; line-height:1.65; }
+  #start { margin-top:20px; border:1px solid var(--amb); background:transparent;
+    color:var(--amb); font-family:inherit; font-size:14px; letter-spacing:.26em;
+    padding:10px 38px; cursor:pointer;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px),
+                       calc(100% - 10px) 100%, 0 100%, 0 10px); }
+  #start:hover:not(:disabled) { background:rgba(201,144,47,.10); }
+  #start:disabled { border-color:#3a3d42; color:#5a5e65; cursor:not-allowed; }
+  #menuhint { margin-top:13px; font-size:12px; color:#4c5057; letter-spacing:.12em; }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<canvas id="mini" width="248" height="248"></canvas>
+<div id="vitals"></div>
+<div id="flash"></div>
+<div id="punish"></div>
+<div id="dead">A L L &nbsp; S H E L L S &nbsp; L O S T</div>
+<div id="keys">
+  <b>W A S D</b> step / strafe &nbsp; <b>Q E</b> turn &nbsp; <b>SPACE</b> act &nbsp; <b>X</b> hold<br>
+  <b>1 2 3 4</b> inhabit body &nbsp; <b>ENTER</b> print (on terminal)<br>
+  <b>ESC</b> shells &nbsp; <b>M</b> map mode<br>
+  <span style="color:#33332f">G reseed · TAB zone · H debug · drop a PNG to swap art</span>
+</div>
+<div id="boss"></div>
+<div id="fade"></div>
+
+<div id="panel" style="display:none">
+  <h2>TUNING</h2>
+  <div id="sliders"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ─────────────────────────────────────────────────────────────
+   DATUM — step-based first-person crawler, prototype 0.1
+   Draft art only. Everything here is a placeholder except the
+   movement feel and the scale grammar, which are the point.
+   ───────────────────────────────────────────────────────────── */
+
+// ── Tunables ───────────────────────────────────────────────────
+const C = {
+  eyeHeight:    1.70,   // metres — CONSTANT across zones. this is what sells scale.
+  stepBaseDur:  260,    // ms for a 3m step
+  stepScaleExp: 0.45,   // how much longer a big step takes. 1.0 = literal, 0 = flat
+  turnDur:      210,
+  bob:          0.055,  // vertical dip during a step
+  lurch:        0.9,    // forward pitch kick, degrees
+  fogK:         0.34,   // fog density = fogK / tileSize
+  lightRange:   2.9,    // player light radius, in tiles
+  lightPower:   1.45,
+  ambient:      0.035,
+  greeble:      0.55,   // 0..1 surface detail density
+  wallHMul:     1.15,   // corridor wall height as multiple of tile size
+
+  // combat — every value here is a tick, not a second.
+  enemyCount:   3,
+  aggro:        7,      // tiles of line-of-sight before it wakes
+  windTicks:    2,      // telegraph length. YOUR window to answer.
+  recoverTicks: 2,      // punish window after it swings
+  enemyHP:      100,
+  enemyDmg:     26,
+  tallyTicks:   3,      // ticks a TALLY needs to finish counting you
+  sight:        3,      // tiles you map around yourself without line of sight
+  dmgScale:     1.0,
+  crush:        9,      // damage a clamped shell takes every tick it stays clamped
+
+  // PS1 pipeline
+  renderH:      272,    // internal vertical resolution, upscaled with no filtering
+  jitter:       160,    // vertex snap grid. 0 = off. lower = more wobble
+  texelM:       1.6,    // metres per 32×32 texture tile
+  props:        0.75,   // pipes / fans / cables / junction boxes
+  auVol:        0.55,
+  muVol:        0.34,
+};
+
+// ── Zones ──────────────────────────────────────────────────────
+// tile  = metres per grid cell. THE key variable.
+// wallH = metres. decoupled from tile on purpose.
+const HALL = [
+  '######D#######',      // the way down, past it
+  '#............#',
+  '#..#......#..#',
+  '#..#......#..#',
+  '#............#',
+  '#.##......##.#',
+  '#............#',
+  '#..##....##..#',
+  '#............#',      // it wakes about here
+  '#..##....##..#',
+  '#............#',
+  '#.##......##.#',
+  '#............#',
+  '#..#..P...#..#',
+  '#............#',
+  '#.....@......#',
+  '######B#######',      // the way you came in
+];
+const VISTA = (() => {
+  const W = 11, H = 26, rows = [];
+  for (let y = 0; y < H; y++) {
+    const r = ' '.repeat(W).split('');
+    r[5] = '=';                                     // one tile wide, most of the way
+    if ([5,6,12,13,19,20].includes(y)) { r[4] = '='; r[6] = '='; }   // landings
+    rows.push(r.join(''));
+  }
+  const put = (y, ch) => { const r = rows[y].split(''); r[5] = ch; rows[y] = r.join(''); };
+  put(H - 2, '@');
+  put(1, 'D');
+  return rows;
+})();
+
+const ZONES = [
+  { id:'vent',  name:'VENT STRATA',   kind:'maze', tile:3,  wallH:3.4, ceiling:true,  w:21, h:21 },
+  { id:'hall',  name:'ASSEMBLY HALL', kind:'map',  tile:4.5, wallH:26,  ceiling:true,  map:HALL, boss:true },
+  // fogD and fogCol are explicit here: deriving density from tile size works
+  // inside corridors and is catastrophic in a void — it hid everything past
+  // sixty metres, which is where this whole zone lives.
+  { id:'span',  name:'SPAN 04',       kind:'map',  tile:11, wallH:0,   ceiling:false,
+    map:VISTA, vista:true, fogD:0.00072, fogCol:0x121620, far:26000 },
+];
+let zoneIdx = 0;
+
+// ── Seeded RNG ─────────────────────────────────────────────────
+let seed = 0x9e3779b9;
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+let rnd = mulberry32(seed);
+
+// ── Maze generation (recursive backtracker + loop carving) ─────
+// Pure mazes are miserable to play. We punch holes to create loops
+// so the corridor zone reads as infrastructure, not as a puzzle.
+function genMaze(w, h) {
+  const g = Array.from({length:h}, () => Array(w).fill('#'));
+  const stack = [[1,1]];
+  g[1][1] = '.';
+  const dirs = [[0,-2],[2,0],[0,2],[-2,0]];
+  while (stack.length) {
+    const [x,y] = stack[stack.length-1];
+    const opts = [];
+    for (const [dx,dy] of dirs) {
+      const nx=x+dx, ny=y+dy;
+      if (nx>0 && ny>0 && nx<w-1 && ny<h-1 && g[ny][nx]==='#') opts.push([nx,ny,dx,dy]);
+    }
+    if (!opts.length) { stack.pop(); continue; }
+    const [nx,ny,dx,dy] = opts[(rnd()*opts.length)|0];
+    g[y+dy/2][x+dx/2] = '.';
+    g[ny][nx] = '.';
+    stack.push([nx,ny]);
+  }
+  // carve loops
+  const loops = Math.floor(w*h*0.035);
+  for (let i=0;i<loops;i++){
+    const x = 1 + ((rnd()*(w-2))|0), y = 1 + ((rnd()*(h-2))|0);
+    if (g[y][x] !== '#') continue;
+    const horiz = g[y][x-1]==='.' && g[y][x+1]==='.';
+    const vert  = g[y-1] && g[y+1] && g[y-1][x]==='.' && g[y+1][x]==='.';
+    if (horiz || vert) g[y][x] = '.';
+  }
+  g[1][1] = '@';
+
+  // Fixtures are solid, so a fixture in a corridor is a wall across the route.
+  // Put them in dead ends only — a cell with exactly one open neighbour — and
+  // carve one if the loop-punching left none.
+  const openN = (x,y) => [[1,0],[-1,0],[0,1],[0,-1]]
+    .filter(([dx,dy]) => g[y+dy] && g[y+dy][x+dx] !== '#').length;
+
+  const ends = [];
+  for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++)
+    if (g[y][x] === '.' && openN(x,y) === 1) ends.push([x,y]);
+
+  const carve = () => {                    // no dead end left: make an alcove
+    for (let k=0;k<600;k++) {
+      const x = 1 + ((rnd()*(w-2))|0), y = 1 + ((rnd()*(h-2))|0);
+      if (g[y][x] !== '#') continue;
+      if (openN(x,y) !== 1) continue;      // touches exactly one corridor
+      g[y][x] = '.'; return [x,y];
+    }
+    return null;
+  };
+
+  const far = (list) => list.reduce((best, c) =>
+    (!best || (c[0]+c[1]) > (best[0]+best[1])) ? c : best, null);
+  const mid = (list) => list.reduce((best, c) => {
+    const d = Math.abs(c[0]-(w>>1)) + Math.abs(c[1]-(h>>1));
+    return (!best || d < best.d) ? { c, d } : best;
+  }, null);
+
+  let door = far(ends);
+  if (!door) door = carve();
+  if (door) { g[door[1]][door[0]] = 'D';
+              const i = ends.findIndex(c => c[0]===door[0] && c[1]===door[1]);
+              if (i >= 0) ends.splice(i, 1); }
+
+  let pr = mid(ends);
+  let prc = pr ? pr.c : carve();
+  if (prc && g[prc[1]][prc[0]] === '.') g[prc[1]][prc[0]] = 'P';
+
+  return g.map(r => r.join(''));
+}
+
+// ── Procedural texture forge (everything is 32×32, PS1-era budget) ──
+function mkc(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const x=c.getContext('2d'); x.imageSmoothingEnabled=false; return [c,x]; }
+function px(x,a,b,w,h,col){ x.fillStyle=col; x.fillRect(a|0,b|0,w|0,h|0); }
+function shade(hex, f){                       // multiply a hex colour
+  const n=parseInt(hex.slice(1),16);
+  const r=Math.min(255,(n>>16)*f)|0, g=Math.min(255,((n>>8)&255)*f)|0, b=Math.min(255,(n&255)*f)|0;
+  return 'rgb('+r+','+g+','+b+')';
+}
+
+function texPanel(base, opt={}) {
+  const [c,x] = mkc(32,32); const R = mulberry32(opt.seed || 7);
+  px(x,0,0,32,32, base);
+  // panel seams — the grid that says "assembled, not grown"
+  px(x,0,0,32,1, shade(base,0.52)); px(x,0,31,32,1, shade(base,1.34));
+  px(x,0,0,1,32, shade(base,0.52)); px(x,31,0,1,32, shade(base,1.22));
+  if (opt.split) { px(x,0,15,32,1, shade(base,0.55)); px(x,0,16,32,1, shade(base,1.18)); }
+  // rivets
+  for (const [rx,ry] of [[3,3],[28,3],[3,28],[28,28]]) {
+    px(x,rx,ry,2,2, shade(base,1.45)); px(x,rx,ry+1,2,1, shade(base,0.6));
+  }
+  // grime, uneven and everywhere — no focal point
+  for (let i=0;i<190;i++) {
+    const a=(R()*32)|0, b=(R()*32)|0;
+    px(x,a,b,1,1, shade(base, 0.7 + R()*0.62));
+  }
+  // vertical drips — oil, coolant, whatever this place bleeds
+  for (let i=0;i<(opt.drips||3);i++) {
+    const a=(R()*32)|0, len=4+(R()*18)|0, top=(R()*20)|0;
+    for (let j=0;j<len;j++) px(x,a,top+j,1,1, shade(base, 0.44 + R()*0.16));
+  }
+  if (opt.vent) for (let j=8;j<24;j+=3) px(x,10,j,12,1, shade(base,0.42));
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestMipmapNearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+function texSpark() {
+  const [c,x] = mkc(8,8);
+  px(x,3,0,2,8,'#fff'); px(x,0,3,8,2,'#fff');
+  px(x,2,2,4,4,'#fff');
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = t.minFilter = THREE.NearestFilter;
+  return t;
+}
+
+// PS1 vertex snapping — the wobble comes from low-precision clip space
+function ps1ify(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uJit = { get value(){ return C.jitter; } };
+    sh.vertexShader = 'uniform float uJit;\n' + sh.vertexShader.replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+       if (uJit > 0.5) {
+         vec4 sp = gl_Position; sp.xyz /= sp.w;
+         sp.xy = floor(sp.xy * uJit) / uJit;
+         sp.xyz *= sp.w; gl_Position = sp;
+       }`);
+  };
+  mat.needsUpdate = true;
+  return mat;
+}
+
+
+function texPipe() {
+  const [c,x] = mkc(32,32); const R = mulberry32(77);
+  px(x,0,0,32,32,'#4e4a42');
+  for (let i=0;i<32;i++) px(x,0,i,32,1, shade('#4e4a42', 0.62 + 0.55*Math.sin(i/32*Math.PI)));
+  for (const b of [3,16,29]) { px(x,0,b,32,2,'#33302a'); px(x,0,b+2,32,1,'#6b665a'); }
+  for (let i=0;i<120;i++) px(x,(R()*32)|0,(R()*32)|0,1,1, shade('#4e4a42', 0.5+R()*0.7));
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestMipmapNearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// ── Renderer / scene ───────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias:false, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.08, 6000);
+const rig    = new THREE.Object3D();   // grid-locked position + facing
+const head   = new THREE.Object3D();   // bob / lurch, never touches logic
+rig.add(head); head.add(camera); scene.add(rig);
+
+const ambient = new THREE.HemisphereLight(0x4a5058, 0x0a0a0c, C.ambient);
+scene.add(ambient);
+const lamp = new THREE.PointLight(0xd8cbb0, C.lightPower, 12, 2);
+head.add(lamp);
+
+// ── Low-res composite: render small, blit big, no filtering ────
+const RT = new THREE.WebGLRenderTarget(320, 240, {
+  minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+  format: THREE.RGBAFormat, depthBuffer: true });
+const blitScene = new THREE.Scene();
+const blitCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+blitScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),
+  new THREE.MeshBasicMaterial({ map: RT.texture })));
+
+function sizeRT() {
+  const h = Math.round(C.renderH);
+  RT.setSize(Math.max(2, Math.round(h * innerWidth/innerHeight)), h);
+}
+sizeRT();
+
+// ── Materials (32×32 procedural, nearest-filtered, vertex-snapped) ──
+const TEX = {
+  wall:  texPanel('#4a4a45', { seed:11, split:true, drips:4 }),
+  floor: texPanel('#3c3c37', { seed:23, split:true, drips:1 }),
+  ceil:  texPanel('#2c2c29', { seed:41, vent:true, drips:2 }),
+  greeb: texPanel('#565650', { seed:59, drips:0 }),
+  pipe:  texPipe(),
+};
+const M = {
+  floor:   ps1ify(new THREE.MeshLambertMaterial({ map:TEX.floor, color:0xb8b8b0 })),
+  wall:    ps1ify(new THREE.MeshLambertMaterial({ map:TEX.wall,  color:0xc0c0b8 })),
+  ceil:    ps1ify(new THREE.MeshLambertMaterial({ map:TEX.ceil,  color:0x9a9a94 })),
+  greeble: ps1ify(new THREE.MeshLambertMaterial({ map:TEX.greeb, color:0xa8a8a0 })),
+  pipe:    ps1ify(new THREE.MeshLambertMaterial({ map:TEX.pipe,  color:0xb0aca2 })),
+  metal:   ps1ify(new THREE.MeshLambertMaterial({ map:TEX.pipe, color:0x8e8a80 })),
+  dark:    ps1ify(new THREE.MeshLambertMaterial({ map:TEX.pipe, color:0x3a3830 })),
+  far:     new THREE.MeshLambertMaterial({ color:0x191a1c }),
+  term:    new THREE.MeshBasicMaterial({ color:0xc9902f }),
+};
+const SPARK = texSpark();
+
+// ── Particles: sparks, motes, the small bright lies that sell a hit ──
+const PMAX = 260;
+const pPos = new Float32Array(PMAX*3), pCol = new Float32Array(PMAX*3);
+const pVel = new Float32Array(PMAX*3), pLife = new Float32Array(PMAX);
+let pHead = 0;
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos,3));
+pGeo.setAttribute('color',    new THREE.BufferAttribute(pCol,3));
+const pts = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  size:0.16, map:SPARK, vertexColors:true, transparent:true, depthWrite:false,
+  blending:THREE.AdditiveBlending, sizeAttenuation:true }));
+pts.frustumCulled = false; scene.add(pts);
+
+function burst(x,y,z, n, col, spread, up, sc) {
+  const t = sc || (Z ? Z.tile/3 : 1);
+  for (let i=0;i<n;i++) {
+    const j = pHead; pHead = (pHead+1) % PMAX;
+    pPos[j*3]=x; pPos[j*3+1]=y; pPos[j*3+2]=z;
+    pVel[j*3]   = (Math.random()-0.5)*spread*t;
+    pVel[j*3+1] = (Math.random()-0.2)*spread*t + (up||0)*t;
+    pVel[j*3+2] = (Math.random()-0.5)*spread*t;
+    const f = 0.6 + Math.random()*0.6;
+    pCol[j*3]=col[0]*f; pCol[j*3+1]=col[1]*f; pCol[j*3+2]=col[2]*f;
+    pLife[j] = 0.34 + Math.random()*0.4;
+  }
+}
+
+function updateParticles(dt) {
+  const t = Z ? Z.tile/3 : 1;
+  for (let i=0;i<PMAX;i++) {
+    if (pLife[i] <= 0) { if (pCol[i*3]||pCol[i*3+1]||pCol[i*3+2]) { pCol[i*3]=pCol[i*3+1]=pCol[i*3+2]=0; } continue; }
+    pLife[i] -= dt;
+    pVel[i*3+1] -= 9.2 * t * dt;
+    pPos[i*3]   += pVel[i*3]  *dt;
+    pPos[i*3+1] += pVel[i*3+1]*dt;
+    pPos[i*3+2] += pVel[i*3+2]*dt;
+    const f = Math.max(0, pLife[i]) * 2.2;
+    pCol[i*3]*=Math.min(1,f); pCol[i*3+1]*=Math.min(1,f); pCol[i*3+2]*=Math.min(1,f);
+  }
+  pGeo.attributes.position.needsUpdate = true;
+  pGeo.attributes.color.needsUpdate = true;
+  pts.material.size = 0.09 + 0.05 * (Z ? Z.tile/3 : 1);
+}
+
+// ── Enemies ────────────────────────────────────────────────────
+// One rule holds this together: the world advances only when you act.
+// A step is a turn. A TURN is a turn. Facing the wrong way is how you die.
+let enemies = [];
+let tickClock = null, tickBusy = false, tickNo = 0;
+
+// ── Enemy sprite sheet ─────────────────────────────────────────
+// 2 types × 6 states × 3 views. Nihei anatomy: too tall, forearms longer than
+// upper arms, bulbous joints, ribbed torso, elongated skull, no face.
+const SP_W = 320, SP_H = 440;
+const SP_STATES = ['dormant','stalk','stalk2','wind','strike','recover','dead'];
+const SP_VIEWS = ['front','side','back'];
+// The sheet has ONE column until per-state art exists. Storing seven identical
+// copies of every frame cost a megabyte that buys nothing; spend it on texels.
+const SP_COLS = 1;
+const SP_TYPES = 6;
+const PAL = { BONE:'#a49d8c', BN_D:'#6b6457', BN_L:'#cdc5b0',
+              VOID:'#0c0c0a', DARK:'#26241d', AMB:'#c9902f' };
+
+function pixLine(x, x0,y0, x1,y1, th, col) {   // staircase, not antialiased
+  const n = Math.max(1, Math.round(Math.hypot(x1-x0, y1-y0)));
+  x.fillStyle = col;
+  for (let i=0;i<=n;i++) {
+    const a = Math.round(x0 + (x1-x0)*i/n - th/2);
+    const b = Math.round(y0 + (y1-y0)*i/n - th/2);
+    x.fillRect(a, b, th, th);
+  }
+}
+function joint(x, cx, cy, r, col) { x.fillStyle=col;
+  x.fillRect(Math.round(cx-r), Math.round(cy-r+1), r*2, r*2-2);
+  x.fillRect(Math.round(cx-r+1), Math.round(cy-r), r*2-2, r*2); }
+
+function poseOf(state) {
+  const s = state === 'stalk2' ? 'stalk' : state;
+  if (s==='dormant')  return { arm: 1.05, lean: 0.34, glow:0,    crouch:0.20 };
+  if (s==='stalk')    return { arm: 0.62, lean: 0.10, glow:0.10, crouch:0.03 };
+  if (s==='wind')     return { arm:-2.35, lean:-0.24, glow:1,    crouch:-0.07 };
+  if (s==='strike')   return { arm:-2.80, lean: 0.40, glow:1,    crouch:0.05 };
+  if (s==='recover')  return { arm: 1.30, lean: 0.60, glow:0,    crouch:0.32 };
+  return                     { arm: 1.60, lean: 1.42, glow:0,    crouch:0.74 };
+}
+
+// type 0 — hunter. thin, vertical, all reach.
+function drawHunter(x, ox, oy, state, view) {
+  const { BONE, BN_D, BN_L, VOID, DARK, AMB } = PAL;
+  const p = poseOf(state), nar = view==='side' ? 0.5 : 1, back = view==='back';
+  const ph = state === 'stalk2' ? 1 : 0;      // walk frame: opposite leg leads
+  const cx = ox + SP_W/2, base = oy + SP_H - 4 - ph;
+  const Hh = (SP_H-8) * (1 - p.crouch);
+  const hip = base - Hh*0.44, sh = base - Hh*0.86, tilt = Math.sin(p.lean)*Hh*0.17;
+
+  // digitigrade legs — knee forward, hock back
+  for (const s of [-1,1]) {
+    const lead = ph ? -s : s;                 // one leg swings through, one plants
+    const sw = (state==='stalk'||state==='stalk2') ? lead*Hh*0.055 : 0;
+    const hx = cx + s*3.2*nar;
+    const kx = hx + s*1.6*nar + sw, ky = hip + Hh*0.22;
+    const ax = hx - s*0.6*nar + sw*1.6, ay = base - Hh*0.07 - Math.max(0,sw)*0.5;
+    pixLine(x, hx, hip, kx, ky, 3, BN_D);
+    pixLine(x, kx, ky, ax, ay, 3, BONE);
+    joint(x, kx, ky, 2.5, BN_L);
+    pixLine(x, ax, ay, ax + s*3*nar + sw, base - Math.max(0,sw)*0.5, 3, BN_D);
+  }
+  // ribbed torso — narrow, segmented, a spine you can count
+  for (let i=0;i<7;i++) {
+    const u = i/6, yy = hip + (sh-hip)*u, w = (8.5 - Math.abs(u-0.35)*4.5)*nar;
+    px(x, cx + tilt*u - w/2, yy - 1, w, 2, i%2 ? BONE : BN_D);
+    px(x, cx + tilt*u - w/2, yy - 1, 1, 2, BN_L);
+    px(x, cx + tilt*u + w/2 - 1, yy - 1, 1, 2, VOID);
+  }
+  // shoulder yoke
+  px(x, cx + tilt - 7*nar, sh - 3, 14*nar, 4, BN_D);
+  px(x, cx + tilt - 7*nar, sh - 3, 14*nar, 1, BN_L);
+
+  // arms: forearm LONGER than upper arm. this is the whole silhouette.
+  for (const s of [-1,1]) {
+    const sx = cx + tilt + s*5.6*nar, sy = sh - 1;
+    const swA = ph ? s*0.20 : -s*0.20;        // arms counter-swing the legs
+    const arm = p.arm + ((state==='stalk'||state==='stalk2') ? swA : 0);
+    const ex = sx + Math.sin(arm)*Hh*0.24*(back?-1:1), ey = sy + Math.cos(arm)*Hh*0.24;
+    pixLine(x, sx, sy, ex, ey, 3, BN_D);
+    joint(x, ex, ey, 3, BN_L);
+    const fa = arm*1.3 + (s>0 ? 0.12 : -0.06);        // asymmetric, always
+    const fx = ex + Math.sin(fa)*Hh*0.32*(back?-1:1), fy = ey + Math.cos(fa)*Hh*0.32;
+    pixLine(x, ex, ey, fx, fy, 3, BONE);
+    // claws
+    for (let cq=-1; cq<2; cq++) {
+      const ca = fa + cq*0.34;
+      pixLine(x, fx, fy, fx + Math.sin(ca)*Hh*0.09*(back?-1:1), fy + Math.cos(ca)*Hh*0.09,
+              2, p.glow>0.4 ? AMB : BN_L);
+    }
+  }
+  // neck + elongated skull, jutting forward
+  const nx = cx + tilt*1.25, ny = sh - Hh*0.05;
+  pixLine(x, cx+tilt, sh-3, nx, ny, 3, BN_D);
+  const dirf = back ? -1 : 1, sk = Hh*0.13;
+  pixLine(x, nx, ny, nx + dirf*sk*0.75*nar, ny - sk*0.30, 5, BONE);
+  px(x, nx - 2*nar, ny - 4, 4*nar, 4, BN_D);
+  if (!back) {
+    px(x, nx + sk*0.30*nar, ny - sk*0.22, Math.max(1,3*nar), 2, p.glow>0.05 ? AMB : '#241d12');
+  }
+  // dorsal cabling
+  for (let i=0;i<3;i++) {
+    const bx = cx + tilt*0.4 - dirf*4*nar;
+    pixLine(x, bx, sh + i*3, bx - dirf*(5+i*3)*nar, sh + Hh*(0.16+i*0.07), 2, DARK);
+  }
+}
+
+// type 1 — mason. squat, wide carapace, short limbs, built to carry.
+function drawMason(x, ox, oy, state, view) {
+  const { BONE, BN_D, BN_L, VOID, DARK, AMB } = PAL;
+  const p = poseOf(state), nar = view==='side' ? 0.62 : 1, back = view==='back';
+  const ph = state === 'stalk2' ? 1 : 0;
+  const cx = ox + SP_W/2, base = oy + SP_H - 4 - ph*2;
+  const Hh = (SP_H-8) * (1 - p.crouch) * 0.78;
+  const hip = base - Hh*0.40, sh = base - Hh*0.80, tilt = Math.sin(p.lean)*Hh*0.20;
+
+  for (const s of [-1,1]) {                       // stumpy braced legs
+    const lead = ph ? -s : s;
+    const sw = (state==='stalk'||state==='stalk2') ? lead*Hh*0.05 : 0;
+    const hx = cx + s*6*nar;
+    pixLine(x, hx, hip, hx + s*2.5*nar + sw, base - Hh*0.05, 5, BN_D);
+    px(x, hx + s*2.5*nar + sw - 4, base - Hh*0.05, 8, 3, BONE);
+  }
+  // carapace — wide plated shell, the widest thing in the sprite
+  for (let i=0;i<5;i++) {
+    const u=i/4, yy = hip + (sh-hip)*u, w = (20 - u*5)*nar;
+    px(x, cx + tilt*u - w/2, yy-2, w, 3, i%2 ? BONE : BN_D);
+    px(x, cx + tilt*u - w/2, yy-2, 2, 3, BN_L);
+    px(x, cx + tilt*u + w/2 - 2, yy-2, 2, 3, VOID);
+  }
+  px(x, cx + tilt - 11*nar, sh-4, 22*nar, 5, BN_D);
+  px(x, cx + tilt - 11*nar, sh-4, 22*nar, 1, BN_L);
+
+  for (const s of [-1,1]) {                       // thick short arms, blunt tools
+    const sx = cx + tilt + s*9*nar, sy = sh;
+    const ex = sx + Math.sin(p.arm)*Hh*0.26*(back?-1:1), ey = sy + Math.cos(p.arm)*Hh*0.26;
+    pixLine(x, sx, sy, ex, ey, 5, BN_D);
+    joint(x, ex, ey, 3.5, BN_L);
+    const fa = p.arm*1.15;
+    const fx = ex + Math.sin(fa)*Hh*0.22*(back?-1:1), fy = ey + Math.cos(fa)*Hh*0.22;
+    pixLine(x, ex, ey, fx, fy, 5, BONE);
+    px(x, fx-4, fy-3, 8, 6, p.glow>0.4 ? AMB : DARK);
+  }
+  // sunken head, barely clears the shell
+  const nx = cx + tilt*1.1, ny = sh - Hh*0.06;
+  px(x, nx-5*nar, ny-5, 10*nar, 7, BN_D);
+  px(x, nx-5*nar, ny-5, 10*nar, 1, BN_L);
+  if (!back) for (let i=-1;i<2;i++)
+    px(x, nx + i*3*nar - 1, ny-2, 2, 2, p.glow>0.05 ? AMB : '#241d12');
+}
+
+// fallback art only — SEAM and DRAY are squat, TALLY is the spindly one
+const DRAWERS = [drawMason, drawMason, drawHunter, drawMason, drawHunter, drawMason];
+
+// The sheet is procedural by default but swappable: drop a PNG on the window
+// and it takes over, same grid. Lets generated art drop straight in.
+function buildSheet() {
+  const [c,x] = mkc(SP_W*SP_COLS, SP_H*SP_VIEWS.length*SP_TYPES);
+  for (let ty=0; ty<SP_TYPES; ty++)
+    SP_VIEWS.forEach((v,vi) =>
+      DRAWERS[ty](x, 0, (ty*SP_VIEWS.length + vi)*SP_H, 'stalk', v));
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = t.minFilter = THREE.NearestFilter;
+  return t;
+}
+let SHEET = buildSheet();
+let sheetIsCustom = false;
+const SH_ROWS = SP_VIEWS.length * SP_TYPES;
+
+function makeEnemyMesh(height, type) {
+  const map = SHEET.clone(); map.needsUpdate = true;
+  map.repeat.set(1/SP_COLS, 1/SH_ROWS);
+  const mat = new THREE.MeshLambertMaterial({ map, transparent:true, alphaTest:0.42,
+    side:THREE.DoubleSide, color:0xffffff });
+  const spr = new THREE.Mesh(new THREE.PlaneGeometry(height*SP_W/SP_H, height), mat);
+  spr.position.y = height/2;
+  const g = new THREE.Group(); g.add(spr);
+  const glow = new THREE.PointLight(0xc9902f, 0, height*3.2, 2);
+  glow.position.y = height*0.9; g.add(glow);
+  g.userData = { spr, mat, map, glow, height };
+  return g;
+}
+
+function setFrame(e, state, view, mirror) {
+  const row = e.type*SP_VIEWS.length + Math.max(0, SP_VIEWS.indexOf(view));
+  const m = e.g.userData.map;
+  m.repeat.x = mirror ? -1/SP_COLS : 1/SP_COLS;
+  m.offset.x = mirror ? 1/SP_COLS : 0;
+  m.offset.y = 1 - (row+1)/SH_ROWS;
+}
+
+// ── Enemy roster ───────────────────────────────────────────────
+// Sector 1 has no predators. Everything that hurts you is doing its job.
+// h is METRES, absolute. Tile size is architectural scale, not creature scale —
+// tying them together made a welder six metres tall inside a hall.
+const ETYPE = [
+  { id:'SEAM',  ai:'fighter',  hp:100, h:2.30, mat:1,
+    note:'seals gaps. you are a gap.' },
+  { id:'DRAY',  ai:'hauler',   hp:70,  h:1.35, mat:2,
+    note:'hauls material. does not care.' },
+  { id:'TALLY', ai:'surveyor', hp:45,  h:2.70, mat:1,
+    note:'counts. reports.' },
+  // The cadaver: one machine filed under two contradicting work orders.
+  // SEAL clamps a shell and holds it. BREAK hits whatever SEAL is holding.
+  // Neither half can finish while the other is working. It has been like
+  // this for a very long time.
+  { id:'SEAL',  ai:'sealer',  hp:190, h:2.90, mat:0, boss:true,
+    note:'holds. will not let go.' },
+  { id:'BREAK', ai:'breaker', hp:220, h:3.20, mat:0, boss:true,
+    note:'removes obstructions.' },
+  // Phase one: both orders running through one chassis, alternating, never
+  // finishing either. Break it and the contradiction comes apart into two.
+  { id:'CADAVER', ai:'cadaver', hp:300, h:4.10, mat:0, boss:true, phase1:true,
+    note:'filed twice. cannot finish.' },
+];
+const MIX = [0,0,1,2,0,1,2,0];              // composition, cycled
+
+function addEnemy(x, y, type, face) {
+  const T = ETYPE[type], t = Z.tile;
+  const key = type + '@' + x + ',' + y;
+  if (zstate().killed.has(key)) return null;      // this one is already down
+  const g = makeEnemyMesh(T.h, type);
+  g.position.set(x*t, 0, y*t);
+  world.add(g);
+  const e = { x, y, type, T, face: face === undefined ? (rnd()*4)|0 : face,
+              hp:T.hp, state:'dormant', timer:0, count:0,
+              g, fx:x, fy:y, lunge:0, flash:0, height:T.h, holds:-1, key };
+  enemies.push(e);
+  return e;
+}
+
+function spawnEnemies() {
+  enemies = [];
+  if (Z.vista) return;                      // nothing to fight on the span. yet.
+  const H = grid.length, W = grid[0].length, t = Z.tile;
+
+  if (Z.boss) {                             // it guards the way down
+    let dx = -1, dy = -1;
+    for (let y=0;y<H;y++) for (let x=0;x<W;x++) if (grid[y][x] === 'D') { dx=x; dy=y; }
+    if (dx >= 0) {
+      // nearest free tiles to the door — the map shape must not decide whether
+      // half the boss exists
+      const cand = [];
+      for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+        if (!canEnter(x,y) || grid[y][x] === '@') continue;
+        const d = Math.max(Math.abs(x-dx), Math.abs(y-dy));
+        if (d >= 1 && d <= 3) cand.push([d, x, y]);
+      }
+      cand.sort((a,b) => a[0] - b[0]);
+      if (cand[0]) {
+        const boss = addEnemy(cand[0][1], cand[0][2], 5, 2); // phase 1: one machine
+        if (boss) {                                          // dormant until you commit
+          const d0 = Math.abs(boss.x - spawn.x) + Math.abs(boss.y - spawn.y);
+          boss.asleep = true;
+          boss.wakeAt = Math.max(2, Math.round(d0 / 2));
+        }
+      }
+    }
+    return;                                   // nothing else works this floor
+  }
+  let placed = 0, guard = 0;
+  while (placed < C.enemyCount && guard++ < 5000) {
+    const x = (rnd()*W)|0, y = (rnd()*H)|0;
+    if (!canEnter(x,y)) continue;
+    if (Math.abs(x-spawn.x) + Math.abs(y-spawn.y) < 5) continue;
+    if (enemies.some(e => e.x===x && e.y===y)) continue;
+    addEnemy(x, y, MIX[placed % MIX.length]);
+    placed++;
+  }
+}
+
+function occupied(x,y) { return enemies.some(e => e.hp>0 && e.x===x && e.y===y); }
+
+function los(x0,y0,x1,y1) {                  // Bresenham, blocked by '#'
+  let dx=Math.abs(x1-x0), dy=Math.abs(y1-y0);
+  let sx=x0<x1?1:-1, sy=y0<y1?1:-1, err=dx-dy, x=x0, y=y0, n=0;
+  while (n++ < 80) {
+    if (x===x1 && y===y1) return true;
+    if (!(x===x0&&y===y0) && !isWalk(x,y)) return false;
+    const e2 = 2*err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 <  dx) { err += dx; y += sy; }
+  }
+  return false;
+}
+
+function faceToward(e, tx, ty) {             // greedy: bigger axis first
+  const dx = tx - e.x, dy = ty - e.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 1 : 3;
+  return dy > 0 ? 2 : 0;
+}
+
+// Halfway across the hall it stops working and turns round.
+function wakeBoss(e) {
+  e.state = 'stalk'; e.alerted = true;
+  e.face = faceToward(e, P.x, P.y);
+  say('IT HAS NOTICED YOU', 'bad');
+  note('CONTACT');
+  screenFlash(flashEl, '0.34', 620);
+  bossRoar();
+  workshopOn = false;
+}
+
+// A held shell is being squeezed, every tick, until you go and pull it out.
+// Without this the clamp was only inconvenient; now it has a clock on it.
+function crushHeld() {
+  if (C.crush <= 0) return;
+  for (let i = 0; i < bodies.length; i++) {
+    const b = bodies[i];
+    if (!b.held || b.hp <= 0) continue;
+    damageShell(i, C.crush, 'crush');
+  }
+}
+
+function enemyTurn() {
+  for (const e of enemies) {
+    if (e.hp <= 0) continue;
+    if (e.asleep) {                          // it is working, and has not noticed
+      const d = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+      if (d > e.wakeAt) { e.state = 'dormant'; continue; }
+      e.asleep = false;
+      wakeBoss(e);
+    }
+    e.fx = e.x; e.fy = e.y; e.lunge = 0;
+    const ai = e.T ? e.T.ai : 'fighter';
+    if (ai === 'hauler')        aiHauler(e);
+    else if (ai === 'surveyor') aiSurveyor(e);
+    else if (ai === 'sealer')   aiSealer(e);
+    else if (ai === 'breaker')  aiBreaker(e);
+    else if (ai === 'cadaver')  aiCadaver(e);
+    else                        aiFighter(e);
+  }
+  crushHeld();
+}
+
+// SEAM — the only thing in sector 1 that swings at you, and only because
+// an unregistered object is standing in a gap it was told to close.
+function aiFighter(e) {
+  const dist = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+  const seen = (dist <= C.aggro && los(e.x, e.y, P.x, P.y)) || e.alerted;
+  const front = DIR[e.face];
+  const facingPlayer = (e.x+front[0] === P.x && e.y+front[1] === P.y);
+
+  switch (e.state) {
+    case 'dormant':
+      if (seen) e.state = 'stalk';
+      break;
+
+    case 'stalk': {
+      if (facingPlayer) { e.state = 'wind'; e.timer = C.windTicks; break; }
+      const want = faceToward(e, P.x, P.y);
+      if (e.face !== want) { e.face = want; break; }     // turning costs its turn too
+      const nx = e.x + front[0], ny = e.y + front[1];
+      if (canEnter(nx,ny) && !occupied(nx,ny) && !(nx===P.x && ny===P.y)) { e.x=nx; e.y=ny; }
+      break;
+    }
+
+    case 'wind':
+      if (e.timer === C.windTicks) tellFor(e);
+      if (--e.timer <= 0) e.state = 'strike';
+      break;
+
+    case 'strike': {
+      const tx = e.x+front[0], ty = e.y+front[1];
+      // damage lands mid-swing, not at tick start — the arm has to come down first
+      if (tx===P.x && ty===P.y) setTimeout(() => damagePlayer(C.enemyDmg),
+                                           (tickClock ? tickClock.dur : 260) * 0.55);
+      else if (canEnter(tx,ty) && !occupied(tx,ty)) { e.x=tx; e.y=ty; }  // kiting isn't free
+      e.lunge = 1;
+      e.state = 'recover'; e.timer = C.recoverTicks;
+      break;
+    }
+
+    case 'recover':
+      if (--e.timer <= 0) e.state = 'stalk';
+      break;
+  }
+}
+
+// DRAY — walks its route and never attacks. If you are in the way it shoves
+// you aside, which can put you inside somebody else's swing. Killing it is
+// pure profit and entirely your idea.
+function aiHauler(e) {
+  const d = DIR[e.face];
+  const nx = e.x + d[0], ny = e.y + d[1];
+  e.state = 'stalk';
+  if (nx === P.x && ny === P.y) {
+    const px = P.x + d[0], py = P.y + d[1];
+    if (canEnter(px,py) && !occupied(px,py)) {
+      shovePlayer(px, py);
+      e.x = nx; e.y = ny;                    // and keeps going — it has a route
+    } else {
+      e.state = 'recover'; e.timer = 2;      // jammed against a wall: stalls, wide open
+      say('DRAY is jammed', 'dim');
+    }
+    return;
+  }
+  if (canEnter(nx,ny) && !occupied(nx,ny)) { e.x = nx; e.y = ny; return; }
+  for (const turn of [1, 3, 2]) {                       // right, left, back
+    const f = (e.face + turn) & 3, dd = DIR[f];
+    if (canEnter(e.x+dd[0], e.y+dd[1])) { e.face = f; return; }
+  }
+}
+
+function shovePlayer(nx, ny) {
+  const t = Z.tile;
+  P.x = nx; P.y = ny;
+  anim = { kind:'move', t0: performance.now(), dur: tickClock ? tickClock.dur : 260,
+           from: rig.position.clone(),
+           to: new THREE.Vector3(nx*t, rig.position.y, ny*t) };
+  bumpT = performance.now(); SFX.bump();
+  say('DRAY shoves you aside', 'warn');
+}
+
+// TALLY — never attacks. It counts. Finish the count and you are in the
+// registry as an unlogged object, and every SEAM in the sector is told where.
+function aiSurveyor(e) {
+  const dist = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+  const seen = dist <= C.aggro * 1.7 && los(e.x, e.y, P.x, P.y);
+  if (!seen) { e.count = 0; e.state = 'dormant'; return; }
+
+  e.face = faceToward(e, P.x, P.y);
+  e.count++;
+  if (e.count === 1) { tellFor(e); say('TALLY begins counting', 'warn'); }
+
+  if (e.count >= C.tallyTicks) {
+    e.count = 0; e.state = 'strike';
+    flagPlayer();
+    return;
+  }
+  e.state = 'wind';
+  if (dist <= 1) {                                      // fragile: keeps its distance
+    const d = DIR[e.face];
+    const bx = e.x - d[0], by = e.y - d[1];
+    if (canEnter(bx,by) && !occupied(bx,by)) { e.x = bx; e.y = by; }
+  }
+}
+
+let logged = false;
+function flagPlayer() {
+  logged = true;
+  for (const f of enemies) {
+    if (f.hp > 0 && f.T && f.T.ai === 'fighter') { f.alerted = true; if (f.state === 'dormant') f.state = 'stalk'; }
+  }
+  screenFlash(flashEl, '0.30', 420);
+  SFX.crit();
+  note('LOGGED — UNREGISTERED OBJECT');
+  say('LOGGED — unregistered object', 'bad');
+}
+
+// One chassis running both work orders in turn. It clamps, then it strikes
+// what it clamped, then it lets go to clamp again — and so it never finishes
+// either job. That is the whole fight, and the whole character.
+function aiCadaver(e) {
+  const dist = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+  if (dist > 9 || !los(e.x, e.y, P.x, P.y)) {
+    e.face = faceToward(e, P.x, P.y); e.state = 'dormant'; return;
+  }
+  if (!inReach(e) && e.state !== 'wind' && e.state !== 'strike') {
+    e.state = 'stalk';
+    if (stepToward(e, P.x, P.y)) return;
+  }
+  e.face = faceToward(e, P.x, P.y);
+
+  const hi = heldIndex();
+  switch (e.state) {
+    // 'stalk' used to fall through this switch and do nothing at all, which is
+    // why it walked up to you and then stood there forever.
+    case 'dormant': case 'recover': case 'stalk':
+      if (e.state === 'recover' && --e.timer > 0) break;
+      if (!inReach(e) && hi < 0) { e.state = 'stalk'; break; }
+      e.state = 'wind'; e.timer = C.windTicks; e.job = hi >= 0 ? 'break' : 'seal';
+      tellFor(e);
+      break;
+
+    case 'wind':
+      if (--e.timer > 0) break;
+      e.state = 'strike';
+      break;
+
+    case 'strike': {
+      e.lunge = 1;
+      if (e.job === 'seal') {
+        const free = freeShells();
+        let pick = (!bodies[active].held && bodies[active].hp > 0 && free > 1)
+          ? active : bodies.findIndex(b => b.hp > 0 && !b.held);
+        if (pick >= 0 && free > 1) {
+          bodies[pick].held = true; e.holds = pick;
+          SFX.seal(); say('CADAVER clamps <b>'+bodies[pick].k+'</b>', 'bad');
+          if (pick === active) {
+            const n = bodies.findIndex(b => b.hp > 0 && !b.held);
+            if (n >= 0) { active = n; say('ejected into <b>'+bodies[n].k+'</b>', 'warn'); }
+          }
+          drawVitals();
+        }
+      } else {
+        const tgt = heldIndex();
+        SFX.brk();
+        if (tgt >= 0) setTimeout(() => { damageShell(tgt, C.enemyDmg * 1.7);
+                                         bodies[tgt].held = false; e.holds = -1; drawVitals(); },
+                                 (tickClock ? tickClock.dur : 260) * 0.55);
+      }
+      e.state = 'recover'; e.timer = C.recoverTicks;
+      break;
+    }
+  }
+}
+
+// Each half wants the tile beside you that its partner is furthest from, so
+// the two of them end up on opposite sides instead of queuing up in one lane.
+function flankTile(e) {
+  const mate = enemies.find(o => o !== e && o.hp > 0 && o.T && o.T.boss);
+  let best = null, bs = -1e9;
+  for (const d of DIR) {
+    const x = P.x + d[0], y = P.y + d[1];
+    if (!canEnter(x, y)) continue;
+    if (occupied(x, y) && !(e.x === x && e.y === y)) continue;
+    const fromMate = mate ? Math.abs(x - mate.x) + Math.abs(y - mate.y) : 0;
+    const toUs     = Math.abs(x - e.x) + Math.abs(y - e.y);
+    const score = fromMate * 3 - toUs;      // far from the partner, near to us
+    if (score > bs) { bs = score; best = [x, y]; }
+  }
+  return best;
+}
+
+// One tick of walking: turning to face costs the tick, same as it does for you.
+function stepToward(e, tx, ty) {
+  if (e.x === tx && e.y === ty) return false;
+  const want = faceToward(e, tx, ty);
+  if (e.face !== want) { e.face = want; return true; }
+  const d = DIR[e.face], nx = e.x + d[0], ny = e.y + d[1];
+  if (canEnter(nx, ny) && !occupied(nx, ny) && !(nx === P.x && ny === P.y)) {
+    e.x = nx; e.y = ny; return true;
+  }
+  for (const t of [1, 3]) {                 // blocked ahead: try to go round
+    const f = (e.face + t) & 3, dd = DIR[f];
+    const ax = e.x + dd[0], ay = e.y + dd[1];
+    if (canEnter(ax, ay) && !occupied(ax, ay) && !(ax === P.x && ay === P.y)) {
+      e.x = ax; e.y = ay; return true;
+    }
+  }
+  return false;
+}
+
+// True when the machine is standing next to you and can actually reach.
+function inReach(e) {
+  return Math.abs(e.x - P.x) + Math.abs(e.y - P.y) <= 1;
+}
+
+function heldIndex() { return bodies.findIndex(b => b.held && b.hp > 0); }
+function freeShells()  { return bodies.filter(b => b.hp > 0 && !b.held).length; }
+
+// SEAL — clamps one shell and will not release it. Never damages anything.
+// It is armoured by whatever it is holding, so it can only be hit while empty.
+function aiSealer(e) {
+  const dist = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+  if (dist > 9 || !los(e.x, e.y, P.x, P.y)) {
+    e.face = faceToward(e, P.x, P.y); e.state = 'dormant'; return;
+  }
+  if (e.solo) return aiFighter(e);            // partner gone: it took the whole order
+
+  if (!inReach(e)) {                          // close in, from its own side
+    const t = flankTile(e);
+    e.state = 'stalk';
+    if (t && stepToward(e, t[0], t[1])) return;
+    if (stepToward(e, P.x, P.y)) return;
+    return;
+  }
+  e.face = faceToward(e, P.x, P.y);
+
+  const held = bodies.filter(b => b.held && b.hp > 0).length;
+  const cap  = e.hp < e.T.hp * 0.5 ? 2 : 1;       // wounded, it starts holding two
+  const free = freeShells();
+
+  if (held >= cap || free <= 1) { e.state = 'hold'; return; }   // hands full: exposed
+
+  if (e.state !== 'wind') { e.state = 'wind'; e.timer = C.windTicks; tellFor(e); return; }
+  if (--e.timer > 0) return;
+
+  // grab: prefers the shell you are standing in, so the cost lands on you now
+  let pick = (!bodies[active].held && bodies[active].hp > 0 && free > 1)
+    ? active
+    : bodies.findIndex(b => b.hp > 0 && !b.held);
+  if (pick < 0) { e.state = 'hold'; return; }
+
+  bodies[pick].held = true;
+  e.holds = pick;
+  e.state = 'strike'; e.lunge = 1;
+  SFX.seal();
+  say('SEAL clamps <b>'+bodies[pick].k+'</b>', 'bad');
+  if (pick === active) {                          // ejected, not killed
+    const next = bodies.findIndex(b => b.hp > 0 && !b.held);
+    if (next >= 0) { active = next; say('ejected into <b>'+bodies[next].k+'</b>', 'warn'); }
+  }
+  drawVitals();
+}
+
+// BREAK — hits whatever SEAL is holding, wherever you are. The clamp is the
+// targeting system. With nothing held it has no work order and stands idle.
+function aiBreaker(e) {
+  const dist = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+  if (dist > 10 || !los(e.x, e.y, P.x, P.y)) {
+    e.face = faceToward(e, P.x, P.y); e.state = 'dormant'; return;
+  }
+  // With nothing left to clamp for it, it stops waiting and simply swings.
+  if (e.solo) return aiFighter(e);
+
+  const hi = heldIndex();
+  // nothing clamped yet, or still out of position: take the far side
+  if (hi < 0 && !inReach(e) && e.state !== 'wind' && e.state !== 'strike') {
+    const t = flankTile(e);
+    e.state = 'stalk';
+    if (t && stepToward(e, t[0], t[1])) return;
+    if (stepToward(e, P.x, P.y)) return;
+    return;
+  }
+  e.face = faceToward(e, P.x, P.y);
+
+  switch (e.state) {
+    case 'dormant': case 'stalk':
+      if (hi >= 0) { e.state = 'wind'; e.timer = C.windTicks; tellFor(e); }
+      else e.state = 'stalk';
+      break;
+    case 'wind':
+      if (hi < 0) { e.state = 'stalk'; break; }    // target let go: order voided
+      if (--e.timer <= 0) e.state = 'strike';
+      break;
+    case 'strike': {
+      const tgt = heldIndex();
+      e.lunge = 1;
+      if (tgt >= 0) setTimeout(() => damageShell(tgt, C.enemyDmg * 1.9),
+                               (tickClock ? tickClock.dur : 260) * 0.55);
+      e.state = 'recover'; e.timer = C.recoverTicks;
+      break;
+    }
+    case 'recover':
+      if (--e.timer <= 0) e.state = 'stalk';
+      break;
+  }
+}
+
+// Phase two: the contradiction comes apart. The halves stop taking turns and
+// start working at the same time, from opposite sides.
+function splitCadaver(e) {
+  explode(e);
+  e.state = 'dead'; e.hp = 0; e.holds = -1;
+  for (const b of bodies) b.held = false;
+  drawVitals();
+  say('THE CADAVER COMES APART', 'bad');
+  note('SEPARATION');
+  screenFlash(flashEl, '0.55', 700);
+
+  const spots = [];
+  for (let r = 1; r <= 4 && spots.length < 2; r++) {
+    for (const [dx,dy] of [[-r,0],[r,0],[0,-r],[0,r],[-r,-r],[r,r],[-r,r],[r,-r]]) {
+      const x = e.x + dx, y = e.y + dy;
+      if (!canEnter(x,y) || occupied(x,y) || (x===P.x && y===P.y)) continue;
+      if (spots.some(sp => sp[0]===x && sp[1]===y)) continue;
+      spots.push([x,y]);
+      if (spots.length >= 2) break;
+    }
+  }
+  if (!spots[0]) spots.push([e.x, e.y]);
+  if (!spots[1]) spots.push([e.x, e.y]);
+
+  const a = addEnemy(spots[0][0], spots[0][1], 3, 2);   // SEAL
+  const b = addEnemy(spots[1][0], spots[1][1], 4, 2);   // BREAK
+  for (const h of [a,b]) { h.state = 'stalk'; h.alerted = true; }
+  setTimeout(() => { SFX.seal(); SFX.brk(); }, 240);
+}
+
+function explode(e) {
+  const U = e.g.userData, sc = U.height / 2.3;
+  const x = e.g.position.x, y = U.height * 0.52, z = e.g.position.z;
+  burst(x, y, z, 64, [1, 0.60, 0.18], 5.2, 1.3, sc);          // the blast
+  burst(x, y, z, 28, [1, 0.96, 0.86], 2.4, 0.7, sc);          // white core
+  impactLight(x, y, z, true);
+  screenFlash(punishEl, '0.14', 190);
+  // debris keeps arriving for a moment after the flash
+  setTimeout(() => burst(x, y*0.55, z, 30, [0.48,0.47,0.44], 3.6, 0.5, sc), 110);
+  setTimeout(() => burst(x, y*1.15, z, 20, [1, 0.42, 0.14], 2.0, 1.8, sc), 230);
+  setTimeout(() => { clank(2.4*sc, 0.16, 0.7); nz(0.5, 700, 120, 1.1, 0.10); }, 90);
+  e.blast = performance.now();
+}
+
+function fxAt(e, n, col, spread) {
+  const U = e.g.userData;
+  burst(e.g.position.x, U.height*0.55, e.g.position.z, n, col, spread, 0.5,
+        U.height / 2.3);                    // sparks sized to the machine, not the hall
+}
+function screenFlash(el, amt, ms) {
+  el.style.transition = 'none'; el.style.opacity = amt;
+  requestAnimationFrame(() => { el.style.transition = 'opacity '+ms+'ms linear';
+    el.style.opacity = '0'; });
+}
+const flashEl = document.getElementById('flash'), punishEl = document.getElementById('punish');
+
+// ── Swing FX ───────────────────────────────────────────────────
+// The hit mark on the enemy tells you it landed. This tells you you SWUNG —
+// and each shell swings differently, so the body you're in is legible in motion.
+const fxc = document.createElement('canvas');
+fxc.id = 'fxc'; document.body.appendChild(fxc);
+const fx2 = fxc.getContext('2d');
+function sizeFX() { fxc.width = innerWidth; fxc.height = innerHeight; }
+sizeFX();
+
+let swing = null;
+function swingFX(kind, hit) {
+  swing = { t0: performance.now(), dur: hit ? 250 : 170, kind, hit };
+}
+
+// Callouts. A thin line leaves the object, breaks once at a small node, and
+// runs flat to a label. Straight from the reference sheets, and the one thing
+// that reads as diegetic instrumentation rather than as a game overlay.
+const _pv = new THREE.Vector3();
+function screenOf(x, y, z) {
+  _pv.set(x, y, z).project(camera);
+  if (_pv.z > 1) return null;                     // behind us
+  return [(_pv.x * 0.5 + 0.5) * fxc.width, (-_pv.y * 0.5 + 0.5) * fxc.height];
+}
+
+function callout(x, y, z, label, sub, col, sub2) {
+  const p = screenOf(x, y, z); if (!p) return;
+  const [sx, sy] = p;
+  const side = sx > fxc.width * 0.5 ? -1 : 1;
+  const bx = sx + side * 40, by = sy - 34;         // the bend
+  const ex = bx + side * 78;                       // the flat run
+  const c = col || 'rgba(240,238,232,.94)';
+
+  fx2.save();
+  // a dark stroke under everything, so it survives a busy wall
+  fx2.lineJoin = 'round'; fx2.lineCap = 'round';
+  fx2.strokeStyle = 'rgba(0,0,0,.80)'; fx2.lineWidth = 3.4;
+  fx2.beginPath(); fx2.moveTo(sx + side*6, sy);
+  fx2.lineTo(bx, by); fx2.lineTo(ex, by); fx2.stroke();
+
+  fx2.strokeStyle = c; fx2.fillStyle = c; fx2.lineWidth = 1.4;
+  fx2.beginPath(); fx2.moveTo(sx + side*6, sy);
+  fx2.lineTo(bx, by); fx2.lineTo(ex, by); fx2.stroke();
+  fx2.lineWidth = 1.6;
+  fx2.beginPath(); fx2.arc(bx, by, 4.2, 0, 6.2832); fx2.stroke();
+  fx2.beginPath(); fx2.arc(sx + side*6, sy, 2.4, 0, 6.2832); fx2.fill();
+
+  fx2.textAlign = side > 0 ? 'left' : 'right';
+  const tx = ex + side * 8;
+  fx2.lineWidth = 3.2; fx2.strokeStyle = 'rgba(0,0,0,.85)';
+
+  fx2.font = '500 15px ui-monospace, Menlo, monospace';
+  fx2.strokeText(label, tx, by - 4); fx2.fillText(label, tx, by - 4);
+
+  if (sub) {
+    fx2.font = '13px ui-monospace, Menlo, monospace';
+    fx2.strokeText(sub, tx, by + 13);
+    fx2.fillStyle = 'rgba(214,212,206,.92)'; fx2.fillText(sub, tx, by + 13);
+  }
+  if (sub2) {
+    fx2.font = '500 13px ui-monospace, Menlo, monospace';
+    fx2.strokeText(sub2, tx, by + 30);
+    fx2.fillStyle = '#e8a63c'; fx2.fillText(sub2, tx, by + 30);
+  }
+  fx2.restore();
+}
+
+// What a machine is about to do, in words. Later this becomes a thing only a
+// grafted personality can read; for now everything shows it, so the tick
+// economy can be checked without guessing.
+function intentOf(e) {
+  const ai = e.T ? e.T.ai : 'fighter';
+  const left = Math.max(0, e.timer);
+  const held = heldIndex();
+  const hn = held >= 0 && bodies[held] ? bodies[held].k : null;
+
+  if (ai === 'surveyor') {
+    if (e.count > 0) return ['COUNTING ' + e.count + '/' + C.tallyTicks +
+                             ' — will report you', 'warn'];
+    return ['WATCHING', 'idle'];
+  }
+  if (ai === 'hauler') {
+    return e.state === 'recover' ? ['JAMMED — cannot move', 'good']
+                                 : ['HAULING — will shove you aside', 'idle'];
+  }
+  if (ai === 'sealer') {
+    if (hn && e.holds >= 0) return ['CRUSHING ' + hn + ' — armoured', 'bad'];
+    if (e.state === 'wind')  return ['REACHING — clamps in ' + left, 'warn'];
+    if (e.state === 'strike')return ['CLAMPING', 'bad'];
+    if (e.state === 'recover')return ['OPEN — hands empty', 'good'];
+    return ['CLOSING IN', 'idle'];
+  }
+  if (ai === 'breaker' || ai === 'cadaver') {
+    if (e.state === 'wind') {
+      const tgt = hn ? ' at ' + hn : '';
+      return [(ai === 'cadaver' && e.job === 'seal' ? 'REACHING — clamps in '
+                                                    : 'WINDING' + tgt + ' — strikes in ') +
+              left, 'warn'];
+    }
+    if (e.state === 'strike') return ['STRIKING', 'bad'];
+    if (e.state === 'recover') return ['RECOVERING — open for ' + left, 'good'];
+    if (hn) return ['AIMED AT ' + hn + ' — held', 'warn'];
+    return ['CLOSING IN', 'idle'];
+  }
+  if (e.state === 'wind')    return ['WINDING UP — strikes in ' + left, 'warn'];
+  if (e.state === 'strike')  return ['STRIKING', 'bad'];
+  if (e.state === 'recover') return ['RECOVERING — open for ' + left, 'good'];
+  return ['CLOSING IN', 'idle'];
+}
+
+const INTENT_COL = {
+  idle: 'rgba(240,238,232,.94)',
+  warn: 'rgba(240,176,72,.96)',
+  bad:  'rgba(224,86,58,.96)',
+  good: 'rgba(150,214,120,.96)',
+};
+
+function drawCallouts() {
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.state === 'dormant') continue;
+    if (!visible.has(e.x + ',' + e.y)) continue;
+    const d = Math.abs(e.x-P.x) + Math.abs(e.y-P.y);
+    if (d > 4) continue;
+    const U = e.g.userData;
+    const [line, tone] = intentOf(e);
+    const frac = e.hp / (e.T ? e.T.hp : 100);
+    // colour comes from what it is doing; low health overrides, because
+    // "nearly dead" is the one thing you want to notice above everything else
+    const col = frac <= 0.30 ? INTENT_COL.bad : INTENT_COL[tone];
+    callout(e.g.position.x, U.height * 1.06 + (U.spr ? U.spr.position.y - U.height/2 : 0),
+            e.g.position.z,
+            e.T.id + '  ' + Math.max(0, Math.round(e.hp)),
+            line, col);
+  }
+
+  // fixtures: what it is, what it does, and the key — but only the key when
+  // you are actually stood in front of it
+  const f = facing();
+  const H = grid.length, W = grid[0] ? grid[0].length : 0, t = Z.tile;
+  for (let y = Math.max(0,P.y-6); y <= Math.min(H-1,P.y+6); y++)
+    for (let x = Math.max(0,P.x-6); x <= Math.min(W-1,P.x+6); x++) {
+      const c = grid[y][x];
+      if (c !== 'P' && c !== 'D' && c !== 'B') continue;
+      if (!visible.has(x + ',' + y)) continue;
+      const here = f && f.x === x && f.y === y;
+      if (!here && Math.abs(x-P.x) + Math.abs(y-P.y) > 5) continue;
+
+      const bossUp = enemies.some(q => q.hp > 0 && q.T && q.T.boss);
+      const label = c === 'D' ? 'DESCENT' : c === 'B' ? 'RETURN' : 'PRINTER';
+      const sub   = c === 'D' ? (bossUp ? 'sealed while it still works'
+                                        : 'the way to the next stratum')
+                  : c === 'B' ? (bossUp ? 'sealed while it still works'
+                                        : 'back the way you came')
+                  : (zstate().spent.has(x + ',' + y)
+                        ? 'spent — nothing left in it'
+                        : 'reprints every shell · stock ' + material);
+      const hint  = !here ? null
+                  : (c === 'D' || c === 'B')
+                      ? (bossUp ? 'will not open'
+                                : (c === 'B' ? '[ENTER] go back' : '[ENTER] descend'))
+                      : (zstate().spent.has(x + ',' + y) ? 'spent'
+                         : material > 0 ? '[ENTER] print' : 'no stock');
+      callout(x*t, t*0.62, y*t, label, sub,
+              here ? 'rgba(240,238,232,.96)' : 'rgba(240,238,232,.55)', hint);
+    }
+}
+
+function drawSwing(now) {
+  fx2.clearRect(0, 0, fxc.width, fxc.height);
+  if (!menuOpen && !bootEl && Z) drawCallouts();
+  if (!swing) return;
+  const k = (now - swing.t0) / swing.dur;
+  if (k >= 1) { swing = null; return; }
+
+  const W = fxc.width, H = fxc.height, cx = W / 2, cy = H * 0.60;
+  const a = Math.pow(1 - k, 1.6) * (swing.hit ? 1 : 0.5);
+  const R = Math.min(W, H);
+  fx2.save();
+  fx2.globalCompositeOperation = 'lighter';
+  fx2.lineCap = 'butt';
+
+  if (swing.kind === 'cut') {                    // BREACH — wide cutter arc
+    const sweep = -0.9 + k * 2.5;
+    for (let i = 0; i < 3; i++) {
+      fx2.strokeStyle = 'rgba(232,226,214,' + (a * (0.5 - i * 0.14)) + ')';
+      fx2.lineWidth = (26 - i * 8) * (1 - k * 0.6);
+      fx2.beginPath();
+      fx2.arc(cx, cy + R * 0.30, R * (0.44 + i * 0.03),
+              sweep - 1.35, sweep - 0.15);
+      fx2.stroke();
+    }
+  } else if (swing.kind === 'slam') {            // BALLAST — blunt shock ring
+    fx2.strokeStyle = 'rgba(226,214,190,' + (a * 0.75) + ')';
+    fx2.lineWidth = 30 * (1 - k);
+    fx2.beginPath(); fx2.arc(cx, cy, R * (0.10 + k * 0.42), 0, 6.2832); fx2.stroke();
+    fx2.fillStyle = 'rgba(240,232,214,' + (a * 0.5) + ')';
+    fx2.fillRect(cx - R * 0.035, cy - R * 0.34 * (1 - k), R * 0.07, R * 0.5);
+  } else if (swing.kind === 'thrust') {          // VECTOR — one thin line, no waste
+    const len = R * (0.20 + k * 0.62);
+    fx2.strokeStyle = 'rgba(255,250,238,' + (a * 0.95) + ')';
+    fx2.lineWidth = 5 * (1 - k * 0.7);
+    fx2.beginPath();
+    fx2.moveTo(cx - len * 0.62, cy + len * 0.34);
+    fx2.lineTo(cx + len * 0.30, cy - len * 0.18);
+    fx2.stroke();
+  } else {                                       // CONDUIT — outward pulse of motes
+    const rr = R * (0.06 + k * 0.34);
+    for (let i = 0; i < 14; i++) {
+      const ang = i / 14 * 6.2832 + k * 0.8;
+      fx2.fillStyle = 'rgba(120,210,140,' + (a * 0.85) + ')';
+      fx2.fillRect(cx + Math.cos(ang) * rr - 3, cy + Math.sin(ang) * rr - 3, 6, 6);
+    }
+  }
+  fx2.restore();
+}
+
+function playerStrike() {
+  const b = A(); if (!b) return;
+  if (b.a.repair) {                          // Conduit: mends the worst shell, hits nothing
+    if (b.mends <= 0) {
+      swingFX(b.a.fx, false); bump();
+      say('<b>'+b.k+'</b> has nothing left to mend with', 'warn'); return;
+    }
+    const t = bodies.filter(v => v.hp > 0 && v !== b)
+                    .sort((x,y) => x.hp/x.a.integ - y.hp/y.a.integ)[0];
+    if (!t || t.hp >= t.a.integ) { swingFX(b.a.fx, false); bump(); return; }
+    b.mends--;
+    t.hp = Math.min(t.a.integ, t.hp + b.a.repair); drawVitals();
+    swingFX(b.a.fx, true); SFX.pulse();
+    say('<b>'+b.k+'</b> mends '+t.k+' — +'+b.a.repair+
+        ' · '+b.mends+' left', b.mends ? 'good' : 'warn');
+    const d = DIR[P.face];
+    burst(rig.position.x + d[0]*Z.tile*0.4, rig.position.y - 0.3,
+          rig.position.z + d[1]*Z.tile*0.4, 16, [0.35,0.9,0.45], 0.5, 1.6);
+    return;
+  }
+  const d = DIR[P.face];
+  const tx = P.x + d[0], ty = P.y + d[1];
+  const e = enemies.find(v => v.hp>0 && v.x===tx && v.y===ty);
+  if (!e) { swingFX(b.a.fx, false); SFX[b.a.fx](); bump();
+            say('<b>'+b.k+'</b> strikes nothing', 'dim'); return; }
+  if (e.T && e.T.ai === 'sealer' && bodies.some(v => v.held && v.hp > 0)) {
+    swingFX(b.a.fx, false); SFX.bump(); bump();
+    say('SEAL is armoured by what it holds', 'dim'); return;
+  }
+  const isPunish = e.state === 'recover' ||
+                   (e.T && e.T.ai === 'sealer' && !bodies.some(v => v.held && v.hp > 0));
+  const dmg = b.a.dmg * C.dmgScale * (isPunish ? b.a.punish : 1);
+  e.hp -= dmg; e.flash = performance.now();
+  swingFX(b.a.fx, true); (isPunish ? SFX.crit : SFX.clank)();
+  say((isPunish ? 'punish · ' : '') + '<b>'+b.k+'</b> strikes '+e.T.id+' — '+Math.round(dmg),
+      isPunish ? 'good' : null);
+  impactLight(e.g.position.x, e.g.userData.height*0.55, e.g.position.z, isPunish);
+  fxAt(e, isPunish ? 34 : 16, isPunish ? [1,0.95,0.8] : [1,0.62,0.22], isPunish ? 3.4 : 1.9);
+  if (isPunish) screenFlash(punishEl, '0.34', 160);
+  bumpT = performance.now();                 // the swing kicks the camera too
+  if (e.hp <= 0) {
+    // phase one does not die, it comes apart
+    if (e.T && e.T.phase1) { splitCadaver(e); return; }
+
+    e.state = 'dead'; SFX.kill(); explode(e);
+    if (e.key) zstate().killed.add(e.key);
+    say(e.T.id+' destroyed — material +'+e.T.mat, 'good');
+    material = Math.min(6, material + (e.T ? e.T.mat : 1));
+
+    releaseClamps(e);
+    // the surviving half inherits the whole contradiction
+    if (e.T.boss) {
+      for (const o of enemies) if (o.hp > 0 && o.T && o.T.boss && !o.solo) {
+        o.solo = true; o.alerted = true; o.state = 'stalk';
+        say(o.T.id + ' takes the whole order', 'bad');
+      }
+    }
+  }
+}
+
+// A dead machine cannot keep holding anything. Without this a shell stays
+// clamped forever once the thing gripping it is destroyed.
+function releaseClamps(e) {
+  let freed = false;
+  if (e.holds >= 0 && bodies[e.holds]) { bodies[e.holds].held = false; freed = true; }
+  e.holds = -1;
+  // nothing left that can clamp? then nothing stays clamped
+  if (!enemies.some(o => o.hp > 0 && o.T &&
+        (o.T.ai === 'sealer' || o.T.ai === 'cadaver'))) {
+    for (const b of bodies) if (b.held) { b.held = false; freed = true; }
+  }
+  if (freed) { drawVitals(); say('clamp released', 'good'); }
+}
+
+// short-lived light at the point of contact — sells the hit in 3D, not just on screen
+let impLight = null, impT = 0;
+function impactLight(x, y, z, big) {
+  if (!impLight) { impLight = new THREE.PointLight(0xffd9a0, 0, 1, 2); scene.add(impLight); }
+  impLight.position.set(x, y, z);
+  impLight.distance = Z.tile * (big ? 4.5 : 2.6);
+  impT = performance.now();
+  impLight.userData.peak = (big ? 9 : 4.5) * Math.pow(Z.tile/3, 0.9);
+}
+
+function updateEnemies(now) {
+  const k = tickClock ? Math.min(1, (now - tickClock.t0)/tickClock.dur) : 1;
+  const t = Z ? Z.tile : 3;
+  const camX = rig.position.x, camZ = rig.position.z;
+
+  for (const e of enemies) {
+    const U = e.g.userData;
+
+    if (e.state === 'dead') {
+      setFrame(e, 'dead', 'side', false);
+      const bk = Math.min(1, (now - (e.blast || now)) / 700);
+      U.spr.position.y = Math.max(U.height*0.10, U.spr.position.y - 0.16*U.height*(1-bk));
+      U.spr.scale.setScalar(Math.max(0.42, 1 - bk*0.58));
+      U.mat.opacity = Math.max(0.10, 1 - bk*0.9);
+      U.glow.color.setHex(0xff7a22);
+      U.glow.intensity = Math.max(0, (1 - bk*1.6) * 5);        // it burns out
+      U.mat.transparent = true;
+      U.spr.rotation.y = Math.atan2(camX - e.g.position.x, camZ - e.g.position.z);
+      continue;
+    }
+
+    // position, lunge and recoil
+    const lx = e.fx + (e.x - e.fx)*easeOut(k), ly = e.fy + (e.y - e.fy)*easeOut(k);
+    const d = DIR[e.face];
+    // a butt, not a sway: it rocks back, snaps forward, then drifts home
+    let push = 0;
+    if (e.lunge) {
+      push = k < 0.22 ? -0.20 * (k/0.22)                       // load up
+           : k < 0.44 ? -0.20 + 1.20 * ((k-0.22)/0.22)         // strike out
+                      : 1.00 * Math.pow(1 - (k-0.44)/0.56, 1.7); // ride back
+      push *= t * 0.34;
+    }
+    // winding up leans it toward you a little, so the tell has weight
+    if (e.state === 'wind') {
+      const w = 1 - (e.timer-1+k)/C.windTicks;
+      push += t * 0.05 * w;
+    }
+    // struck: a hard rattle across its own axis, dying out fast
+    const hk = (now - e.flash) / 190;
+    let jx = 0, jz = 0;
+    if (hk >= 0 && hk < 1) {
+      const amp = t * 0.055 * Math.pow(1 - hk, 2);
+      jx = Math.sin(now * 0.09) * amp;
+      jz = Math.cos(now * 0.11) * amp;
+    }
+    e.g.position.set(lx*t + d[0]*push + jx, 0, ly*t + d[1]*push + jz);
+
+    // billboard, Y only
+    const toCamX = camX - e.g.position.x, toCamZ = camZ - e.g.position.z;
+    U.spr.rotation.y = Math.atan2(toCamX, toCamZ);
+
+    // which sprite view — do we see its face, its back, or its flank?
+    const len = Math.hypot(toCamX, toCamZ) || 1;
+    const dot   = (d[0]*toCamX + d[1]*toCamZ) / len;
+    const cross = (d[0]*toCamZ - d[1]*toCamX) / len;
+    const view = dot >  0.45 ? 'front' : dot < -0.45 ? 'back' : 'side';
+    // walk frame only while it is actually crossing a tile
+    const striding = e.state === 'stalk' && (e.fx !== e.x || e.fy !== e.y) && k < 0.9;
+    setFrame(e, striding ? 'stalk2' : e.state, view, view === 'side' && cross < 0);
+
+    // idle sway + strike shove, in sprite-local space
+    const sway = e.state==='stalk' ? Math.sin(now*0.004)*U.height*0.012 : 0;
+    U.spr.position.y = U.height/2 + sway;
+
+    // the tell: light, not emissive. it lights the corridor before it swings.
+    let glow = 0;
+    if (e.state === 'wind')   glow = 1 - (e.timer-1+k)/C.windTicks;
+    if (e.state === 'strike') glow = 1;
+    // hit: the whole machine reads red for a moment. Amber means it is about to
+    // act, red means it just took something — the two never mean the same thing.
+    const hf = Math.max(0, 1 - (now - e.flash) / 220);
+    U.glow.intensity = glow * 3.0 * Math.pow(t/3, 0.8);
+    if (hf > 0) {
+      U.mat.color.setRGB(1 + hf * 2.6, 1 - hf * 0.72, 1 - hf * 0.78);
+      U.spr.scale.setScalar(1 + hf * 0.05);          // a small flinch outward
+    } else {
+      U.mat.color.setScalar(1);
+      U.spr.scale.setScalar(1);
+    }
+  }
+}
+
+// ── Level build ────────────────────────────────────────────────
+let world = new THREE.Group(); scene.add(world);
+let grid = [], Z = null, spawn = {x:1,y:1};
+
+const WALK = new Set(['.','@','P','D','B','T','=']);
+const FIXTURE = new Set(['P','D','B','T']); // rendered as floor, but solid
+const isFix  = (x,y) => grid[y] && FIXTURE.has(grid[y][x]);
+// isWalk stays "is this open space" — for line of sight, mapping and lighting.
+// canEnter is "can a body stand here", which fixtures block.
+const canEnter = (x,y) => isWalk(x,y) && !isFix(x,y);
+// the fixture you are facing, if any
+function facing() {
+  const d = DIR[P.face], x = P.x + d[0], y = P.y + d[1];
+  return isFix(x,y) ? { x, y, c: grid[y][x] } : null;
+}
+const isWalk = (x,y) => grid[y] && WALK.has(grid[y][x]);
+
+function clearWorld() {
+  world.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  scene.remove(world);
+  world = new THREE.Group();
+  fans = [];
+  scene.add(world);
+}
+
+function buildZone() {
+  clearWorld();
+  Z = ZONES[zoneIdx];
+  grid = Z.kind === 'maze' ? genMaze(Z.w, Z.h) : Z.map.slice();
+
+  const t = Z.tile, wallH = Z.wallH || t * C.wallHMul;
+  const H = grid.length, W = grid[0].length;
+
+  const fogCol = Z.fogCol !== undefined ? Z.fogCol : 0x08090a;
+  scene.fog = new THREE.FogExp2(fogCol, Z.fogD !== undefined ? Z.fogD : C.fogK / t);
+  renderer.setClearColor(fogCol);
+  camera.far = Z.far || 6000; camera.updateProjectionMatrix();
+  lamp.distance = t * C.lightRange;
+  lamp.power    = C.lightPower * 60 * Math.pow(t/3, 1.1);
+  ambient.intensity = C.ambient;
+
+  const floors=[], walls=[], ceils=[];
+  // keep texel density constant regardless of tile size — a 26m span wall
+  // gets many texture tiles, a 3m vent wall gets few.
+  const TEXM = C.texelM;
+  const box = (w,h,d) => {
+    const g = new THREE.BoxGeometry(w,h,d);
+    const uv = g.attributes.uv, sp = [[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+    for (let f=0; f<6; f++) { const [su,sv] = sp[f];
+      for (let i=0;i<4;i++) { const k=(f*4+i)*2;
+        uv.array[k] *= su/TEXM; uv.array[k+1] *= sv/TEXM; } }
+    uv.needsUpdate = true;
+    return g;
+  };
+
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    const c = grid[y][x];
+    if (c === '@') spawn = {x,y};
+    const wx = x*t, wz = y*t;
+
+    if (c === '#') {
+      const g = box(t, wallH, t);
+      g.translate(wx, wallH/2, wz);
+      walls.push(g);
+    } else if (WALK.has(c)) {
+      const g = box(t, 0.22, t); g.translate(wx, -0.11, wz); floors.push(g);
+      if (Z.ceiling && c !== '=') {
+        const cg = box(t, 0.22, t); cg.translate(wx, wallH+0.11, wz); ceils.push(cg);
+      }
+      if (c === '=') { // railless span — add a lip so the edge reads
+        for (const [dx,dz] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          if (!isWalk(x+dx, y+dz)) {
+            const lg = box(dx?0.3:t, 0.5, dz?0.3:t);
+            lg.translate(wx+dx*t/2, 0.14, wz+dz*t/2); floors.push(lg);
+          }
+        }
+      }
+      if (c === 'P' || c === 'T') {              // printer: squat, waist high
+        const m = new THREE.Mesh(box(t*0.30, t*0.26, t*0.22), M.metal);
+        m.position.set(wx, t*0.13, wz); world.add(m);
+        const g2 = new THREE.Mesh(box(t*0.20, t*0.05, t*0.14), M.term);
+        g2.position.set(wx, t*0.27, wz); world.add(g2);
+        const l = new THREE.PointLight(0xc9902f, 2.2, t*2.6, 2);
+        l.position.set(wx, t*0.35, wz); world.add(l);
+      }
+      if (c === 'D' || c === 'B') {                // a door: down, or back the way you came
+        const fh = Math.min(wallH*0.8, t*1.5);
+        for (const sx of [-1,1]) {
+          const post = new THREE.Mesh(box(t*0.10, fh, t*0.16), M.metal);
+          post.position.set(wx + sx*t*0.34, fh/2, wz); world.add(post);
+        }
+        const lintel = new THREE.Mesh(box(t*0.80, t*0.10, t*0.16), M.metal);
+        lintel.position.set(wx, fh, wz); world.add(lintel);
+        const sill = new THREE.Mesh(box(t*0.70, t*0.03, t*0.30), M.term);
+        sill.position.set(wx, 0.02, wz); world.add(sill);
+        const l = new THREE.PointLight(0xc9902f, 3.0, t*3.4, 2);
+        l.position.set(wx, fh*0.5, wz); world.add(l);
+      }
+    }
+  }
+
+  const merge = (arr, mat) => {
+    if (!arr.length) return;
+    const g = mergeGeoms(arr);
+    world.add(new THREE.Mesh(g, mat));
+  };
+  merge(floors, M.floor); merge(walls, M.wall); merge(ceils, M.ceil);
+
+  buildGreebles(W, H, t, wallH);
+  buildProps(W, H, t, wallH);
+  if (Z.vista) buildVista(W, H, t);
+  scatterLights(W, H, t, wallH);
+  spawnEnemies();
+}
+
+// r128 has no BufferGeometryUtils in the core bundle — do it by hand.
+function mergeGeoms(list) {
+  let pc=0, ic=0;
+  for (const g of list) { pc += g.attributes.position.count; ic += g.index.count; }
+  const pos = new Float32Array(pc*3), nor = new Float32Array(pc*3), uvs = new Float32Array(pc*2);
+  const idx = pc > 65535 ? new Uint32Array(ic) : new Uint16Array(ic);
+  let po=0, uo=0, io=0, vo=0;
+  for (const g of list) {
+    pos.set(g.attributes.position.array, po);
+    nor.set(g.attributes.normal.array, po);
+    if (g.attributes.uv) uvs.set(g.attributes.uv.array, uo);
+    const gi = g.index.array;
+    for (let i=0;i<gi.length;i++) idx[io+i] = gi[i] + vo;
+    vo += g.attributes.position.count; po += g.attributes.position.array.length;
+    uo += g.attributes.position.count*2; io += gi.length;
+    g.dispose();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('normal',   new THREE.BufferAttribute(nor,3));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(uvs,2));
+  geo.setIndex(new THREE.BufferAttribute(idx,1));
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+// Surface detail on a grid, not scattered. Random boxes read as debris;
+// aligned panels at two fixed depths read as something that was assembled.
+function buildGreebles(W, H, t, wallH) {
+  if (C.greeble <= 0.01) return;
+  const lit = [], dark = [];
+  const COLS = 3, cellW = t / COLS;
+  const ROWS = Math.max(2, Math.round(wallH / cellW));
+  const cellH = wallH / ROWS;
+  const D1 = t * 0.009, D2 = t * 0.020;      // only two protrusion depths. ever.
+
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    if (grid[y][x] !== '#') continue;
+    for (let di=0; di<4; di++) {
+      const [dx,dz] = DIR[di];
+      if (!isWalk(x+dx, y+dz)) continue;
+      const alongZ = dx !== 0;
+      const at = (u, vy, dep) => [
+        x*t + dx*(t/2 + dep/2) + (alongZ ? 0 : u*t),
+        vy,
+        y*t + dz*(t/2 + dep/2) + (alongZ ? u*t : 0) ];
+
+      for (let c=0;c<COLS;c++) for (let r=0;r<ROWS;r++) {
+        const hv = hash3(x*7 + c, y*13 + r, di);
+        if (hv > C.greeble * 0.66) continue;
+        const u = (c + 0.5)/COLS - 0.5, vy = (r + 0.5) * cellH;
+        let sw, sh, dep, arr;
+        if (hv < C.greeble*0.26) {                       // flush plate
+          sw = cellW*0.84; sh = cellH*0.80; dep = D1; arr = lit;
+        } else if (hv < C.greeble*0.48) {                // vertical rib
+          sw = cellW*0.26; sh = cellH*0.94; dep = D2; arr = lit;
+        } else {                                         // dark slot / recess
+          sw = cellW*0.78; sh = cellH*0.22; dep = D1*0.7; arr = dark;
+        }
+        const [px_,py_,pz_] = at(u, vy, dep);
+        arr.push([px_, py_, pz_, alongZ ? dep : sw, sh, alongZ ? sw : dep]);
+      }
+
+      // structural post on the left edge of every face — one per tile boundary,
+      // so the corridor gets a steady vertical beat instead of noise
+      const [ax,ay,az] = at(-0.5, wallH/2, D2);
+      lit.push([ax, ay, az, alongZ ? D2 : t*0.075, wallH, alongZ ? t*0.075 : D2]);
+
+      // continuous datum band — the line that says "this was surveyed"
+      const bh = wallH * 0.585, [bx,by,bz] = at(0, bh, D2);
+      lit.push([bx, by, bz, alongZ ? D2 : t*1.005, t*0.045, alongZ ? t*1.005 : D2]);
+    }
+  }
+
+  const emit = (arr, mat) => {
+    if (!arr.length) return;
+    const cap = Math.min(arr.length, 9000);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1), mat, cap);
+    for (let i=0;i<cap;i++) {
+      const [a,b,c2,sx,sy,sz] = arr[i];
+      m.compose(new THREE.Vector3(a,b,c2), q,
+                new THREE.Vector3(Math.max(sx,0.004), Math.max(sy,0.004), Math.max(sz,0.004)));
+      inst.setMatrixAt(i, m);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+    world.add(inst);
+  };
+  emit(lit, M.greeble); emit(dark, M.dark);
+}
+
+function scatterLights(W, H, t, wallH) {
+  const want = Z.vista ? 3 : Math.max(3, Math.floor(W*H*0.012));
+  let placed = 0, guard = 0;
+  while (placed < want && guard++ < 4000) {
+    const x = (rnd()*W)|0, y = (rnd()*H)|0;
+    if (!isWalk(x,y)) continue;
+    const l = new THREE.PointLight(0x9fb2c4, 1.5, t*4.5, 2);
+    l.position.set(x*t, Math.min(wallH*0.8, t*1.6) || t*1.2, y*t);
+    world.add(l); placed++;
+  }
+}
+
+// ── The vista: everything you will never reach ─────────────────
+function buildVista(W, H, t) {
+  const cx = W*t/2, cz = H*t/2, len = H*t;
+  const R = mulberry32(20260204);
+  const rnd2 = (a2,b2) => a2 + R()*(b2-a2);
+
+  // Silhouettes are DARKER than the haze — the fog is the light here and
+  // everything else is a hole punched in it. Fewer objects, further away,
+  // and most of them only just resolving.
+  const SIL = new THREE.MeshLambertMaterial({ color:0x080a0d });
+  const DIM = new THREE.MeshLambertMaterial({ color:0x0c0f15 });
+  const LAMP = new THREE.MeshBasicMaterial({ color:0xc9902f });
+
+  const bag = { sil:[], dim:[] };
+  const box = (w,h,d, x,y,z, ry, into) => {
+    const g = new THREE.BoxGeometry(w,h,d);
+    if (ry) g.rotateY(ry);
+    g.translate(x,y,z);
+    (into || bag.sil).push(g);
+  };
+  const tube = (r,L, x,y,z, rz, ry, into) => {
+    const g = new THREE.CylinderGeometry(r,r,L, 8,1);
+    if (rz) g.rotateZ(rz);
+    if (ry) g.rotateY(ry);
+    g.translate(x,y,z);
+    (into || bag.sil).push(g);
+  };
+
+  // ── it is a room. an impossible one, but a room. ──
+  const CEIL = 1500, FLOOR = -1900, WALL = 7000;
+  const roof = new THREE.Mesh(new THREE.PlaneGeometry(30000,30000), SIL);
+  roof.rotation.x = Math.PI/2; roof.position.set(cx, CEIL, cz); world.add(roof);
+  const deep = new THREE.Mesh(new THREE.PlaneGeometry(30000,30000), SIL);
+  deep.rotation.x = -Math.PI/2; deep.position.set(cx, FLOOR, cz); world.add(deep);
+  for (const [ox,oz,ry] of [[0,-WALL,0],[0,WALL,0],[-WALL,0,Math.PI/2],[WALL,0,Math.PI/2]]) {
+    const wl = new THREE.Mesh(new THREE.PlaneGeometry(24000, 4200), SIL);
+    wl.position.set(cx+ox, (CEIL+FLOOR)/2, cz+oz); wl.rotation.y = ry; world.add(wl);
+  }
+
+  // ── buttresses on the far walls, spaced out so they read as a rhythm ──
+  for (const side of [-1,1]) {
+    for (let i=0;i<12;i++) {
+      const z = cz + (i - 6) * 1150;
+      box(200, CEIL-FLOOR, 200, cx + side*(WALL-140), (CEIL+FLOOR)/2, z, 0, bag.dim);
+      for (let f=0; f<8; f++)                        // storey bands, a scale ruler
+        box(280, 26, 44, cx + side*(WALL-260), FLOOR + 320 + f*400, z, 0, bag.dim);
+    }
+  }
+
+  // ── towers: three bands instead of five, and all of them further out ──
+  const BANDS = [1400, 2800, 4600];
+  BANDS.forEach((band, bi) => {
+    const n = 4 + bi*2;
+    for (let i=0;i<n;i++) {
+      const side = R() < 0.5 ? -1 : 1;
+      const bx = cx + side * rnd2(band*0.8, band*1.3);
+      const bz = cz + rnd2(-1, 1) * (len*1.6 + band*1.5);
+      const w = rnd2(140, 380) * (1 + bi*0.4);
+      const top = rnd2(-100, CEIL*0.85), bot = rnd2(FLOOR*0.85, -500);
+      box(w, top-bot, w*rnd2(0.7,1.4), bx, (top+bot)/2, bz, rnd2(0,1), bag.dim);
+      const floors = Math.floor((top-bot)/rnd2(180,320));
+      for (let f=1; f<floors; f++)
+        box(w*1.14, 20, w*1.14, bx, bot + (top-bot)*f/floors, bz, 0, bag.dim);
+      if (R() < 0.22) {                              // a lit window, very rarely
+        const l = new THREE.Mesh(new THREE.BoxGeometry(w*0.09, w*0.045, w*0.09), LAMP);
+        l.position.set(bx + w*0.55, bot + (top-bot)*rnd2(0.2,0.9), bz);
+        world.add(l);
+      }
+    }
+  });
+
+  // ── pipes: far fewer, and none of them near the bridge ──
+  // A clear corridor of air is kept around the span so nothing crowds it.
+  const CLEAR_X = 900, CLEAR_Z = len * 0.9;
+  for (let i=0;i<12;i++) {
+    for (let tryN=0; tryN<12; tryN++) {
+      const px2 = cx + rnd2(-4000,4000), pz2 = cz + rnd2(-1,1)*len*3.2;
+      if (Math.abs(px2-cx) < CLEAR_X && Math.abs(pz2-cz) < CLEAR_Z) continue;
+      tube(rnd2(30, 150), rnd2(5000, 15000), px2,
+           rnd2(FLOOR*0.8, CEIL*0.8), pz2, Math.PI/2, rnd2(0, Math.PI), bag.dim);
+      break;
+    }
+  }
+
+  // ── a few spans crossing the void, well away from ours ──
+  for (let i=0;i<7;i++) {
+    const L = rnd2(2600, 6000), y = rnd2(FLOOR*0.7, CEIL*0.7);
+    const ry = rnd2(0, Math.PI);
+    const bx = cx + (R()<0.5?-1:1)*rnd2(1600, 3800), bz = cz + rnd2(-1,1)*len*2.6;
+    box(L, 18, 44, bx, y, bz, ry, bag.dim);
+    for (let k=-1;k<=1;k++)
+      box(38, rnd2(400,1200), 38, bx + Math.cos(ry)*k*L*0.3, y - rnd2(220,620),
+          bz - Math.sin(ry)*k*L*0.3, 0, bag.dim);
+  }
+
+  // ── cables out of a ceiling you can only just make out ──
+  for (let i=0;i<12;i++) {
+    const hx = cx + (R()<0.5?-1:1)*rnd2(1100, 3200), hz = cz + rnd2(-1,1)*len*2.4;
+    const drop = rnd2(700, 2400), th = rnd2(6, 18);
+    const seg = 10;
+    for (let k=0;k<seg;k++) {
+      const u = k/(seg-1);
+      const sag = Math.sin(u*Math.PI) * drop * 0.09;
+      box(th, drop/seg*1.25, th, hx + sag, CEIL - 40 - drop*u, hz + sag*0.5, 0, bag.dim);
+    }
+  }
+
+  // ── the machines. two, not four, and both a long way off. ──
+  const machine = (mx, my, mz, sc, ry, into) => {
+    const B = (w,h,d,x,y,z) => box(w,h,d, mx + (x*Math.cos(ry) - z*Math.sin(ry))*sc,
+                                          my + y*sc,
+                                          mz + (x*Math.sin(ry) + z*Math.cos(ry))*sc,
+                                          ry, into);
+    B(220, 500, 190,   0, 250, 0);
+    B(150, 120, 140,   0, 560, 0);
+    B(300,  70, 210,   0, 470, 0);
+    for (const sd of [-1,1]) {
+      B(58, 420, 58, sd*158, 250, 0);
+      B(80, 330, 80, sd*66, -170, 0);
+      B(120, 60, 120, sd*66, -340, 0);
+    }
+    B(70, 260, 70, 0, 640, -60);
+  };
+  machine(cx - 2600, -520, cz - len*1.1, 2.4, 0.55, bag.dim);
+  machine(cx + 3900, -880, cz + len*1.0, 3.4, -0.9, bag.dim);
+
+  if (bag.sil.length) world.add(new THREE.Mesh(mergeGeoms(bag.sil), SIL));
+  if (bag.dim.length) world.add(new THREE.Mesh(mergeGeoms(bag.dim), DIM));
+
+  // a faint fill so the silhouettes separate from the haze at all
+  const fill = new THREE.HemisphereLight(0x1c222b, 0x070809, 0.34);
+  world.add(fill);
+}
+
+// keep texel density constant on any box, whatever its size
+function uvScale(g, w, h, d, m) {
+  const uv = g.attributes.uv; if (!uv) return g;
+  const sp = [[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+  for (let f=0; f<6; f++) { const [su,sv] = sp[f];
+    for (let i=0;i<4;i++) { const k=(f*4+i)*2;
+      uv.array[k] *= su/m; uv.array[k+1] *= sv/m; } }
+  uv.needsUpdate = true; return g;
+}
+function pbox(w,h,d) { return uvScale(new THREE.BoxGeometry(w,h,d), w,h,d, C.texelM); }
+
+// ── Wall infrastructure ────────────────────────────────────────
+// Pipe lanes are chosen by a hash of (lane, wall side, perpendicular coord),
+// never by position along the run — so segments in adjacent tiles agree and
+// the pipe reads as one continuous run instead of scattered debris.
+let fans = [];
+function hash3(a,b,c) {
+  let h = (a*374761393 + b*668265263 + c*1274126177) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function buildProps(W, H, t, wallH) {
+  const R = C.props; if (R <= 0.01) return;
+  const pipes = [], metal = [], dark = [];
+  const LANES = 4;
+
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    if (!isWalk(x,y)) continue;
+    for (let di=0; di<4; di++) {
+      const [dx,dz] = DIR[di];
+      if (isWalk(x+dx, y+dz)) continue;              // needs a wall to hang off
+      const alongZ = dx !== 0;
+      const perp = alongZ ? x : y;
+
+      for (let ln=0; ln<LANES; ln++) {
+        const hv = hash3(ln, di & 1, perp);          // di&1: pipes wrap around corners
+        if (hv > R * 0.5) continue;
+        const rad = t * (0.016 + hash3(ln, 5, perp) * 0.030);
+        const hy  = Math.min(wallH - rad*2.5,
+                    wallH * (0.14 + ln * 0.24) + hash3(ln, 9, perp) * wallH * 0.06);
+        const off = t/2 - rad*1.8;
+        const cxp = x*t + dx*off, czp = y*t + dz*off;
+
+        const g = new THREE.CylinderGeometry(rad, rad, t*1.04, 7, 1);
+        if (alongZ) g.rotateX(Math.PI/2); else g.rotateZ(Math.PI/2);
+        g.translate(cxp, hy, czp);
+        pipes.push(g);
+
+        // bracket clamping it to the wall, once per tile
+        const b = pbox(alongZ ? rad*2.6 : rad*1.1, rad*3.0,
+                       alongZ ? rad*1.1 : rad*2.6);
+        b.translate(cxp - dx*rad*0.9, hy, czp - dz*rad*0.9);
+        metal.push(b);
+      }
+
+      // junction boxes — flat plates with a raised lid
+      if (hash3(x, y, di+31) < R * 0.16) {
+        const w = t*0.22, hh = t*0.17, d = t*0.06;
+        const hy = wallH * (0.24 + hash3(x,y,di) * 0.34);
+        const b1 = pbox(alongZ ? d : w, hh, alongZ ? w : d);
+        b1.translate(x*t + dx*(t/2 - d/2), hy, y*t + dz*(t/2 - d/2));
+        metal.push(b1);
+        const b2 = pbox(alongZ ? d*0.5 : w*0.6, hh*0.5, alongZ ? w*0.6 : d*0.5);
+        b2.translate(x*t + dx*(t/2 - d*1.2), hy, y*t + dz*(t/2 - d*1.2));
+        dark.push(b2);
+      }
+
+      // extractor fans — animated, so they stay separate meshes. hard cap.
+      if (fans.length < 16 && hash3(x, y, di+101) < R * 0.05) {
+        const rr = Math.min(t*0.30, wallH*0.24);
+        const hy = wallH * 0.5;
+        const grp = new THREE.Group();
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, rr*0.14, 6, 14), M.metal);
+        grp.add(ring);
+        const recess = new THREE.Mesh(new THREE.CircleGeometry(rr*0.95, 14), M.dark);
+        recess.position.z = -rr*0.24; grp.add(recess);
+        const hub = new THREE.Group();
+        for (let bl=0; bl<5; bl++) {
+          const blade = new THREE.Mesh(
+            pbox(rr*0.82, rr*0.30, rr*0.05), M.metal);
+          blade.position.x = rr*0.40;
+          const holder = new THREE.Group(); holder.add(blade);
+          holder.rotation.z = bl * (Math.PI*2/5);
+          blade.rotation.x = 0.5;
+          hub.add(holder);
+        }
+        hub.position.z = -rr*0.12; grp.add(hub);
+        grp.position.set(x*t + dx*(t/2 - rr*0.2), hy, y*t + dz*(t/2 - rr*0.2));
+        grp.rotation.y = Math.atan2(-dx, -dz);
+        world.add(grp);
+        fans.push({ hub, spd: 0.4 + hash3(x,y,di)*2.6 });
+      }
+    }
+
+    // sagging cables under the ceiling, spanning the corridor direction
+    if (Z.ceiling && hash3(x, y, 7) < R * 0.34) {
+      const runZ = isWalk(x, y-1) || isWalk(x, y+1);
+      const sag = t * 0.10, top = wallH * 0.93;
+      const seg = 5;
+      for (let s=0; s<seg; s++) {
+        const u = (s + 0.5)/seg - 0.5;
+        const dip = Math.cos(u*Math.PI) * sag;
+        const th = t*0.022;
+        const g = pbox(runZ ? th : t/seg*1.15, th, runZ ? t/seg*1.15 : th);
+        g.translate(x*t + (runZ ? 0 : u*t), top - dip, y*t + (runZ ? u*t : 0));
+        dark.push(g);
+      }
+    }
+  }
+
+  const add = (arr, mat) => { if (arr.length) world.add(new THREE.Mesh(mergeGeoms(arr), mat)); };
+  add(pipes, M.pipe); add(metal, M.metal); add(dark, M.dark);
+}
+
+// ── Audio ──────────────────────────────────────────────────────
+// All synthesised. Nothing to load, nothing to bake into the file.
+// Signal path: sources -> dry -> master, with a parallel send into a dark
+// convolver so everything sounds like it is happening inside concrete.
+const AU = { ctx:null, master:null, dry:null, send:null, music:null, vol:0.55,
+             mode:'ambient', amb:null, cmb:null, apr:null,
+             genAmb:true, genCmb:true };
+
+function auInit() {
+  if (AU.ctx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  const c = AU.ctx = new AC();
+
+  AU.master = c.createGain(); AU.master.gain.value = AU.vol;
+  AU.master.connect(c.destination);
+
+  AU.dry = c.createGain(); AU.dry.gain.value = 1.0; AU.dry.connect(AU.master);
+
+  // reverb: 3s of decaying noise, darkened on the way in
+  const len = Math.floor(c.sampleRate * 3.0);
+  const imp = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = imp.getChannelData(ch);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      const n = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.6);
+      last = last * 0.72 + n * 0.28;                 // one-pole lowpass, darkens the tail
+      d[i] = last;
+    }
+  }
+  const conv = c.createConvolver(); conv.buffer = imp;
+  const pre = c.createBiquadFilter(); pre.type = 'lowpass'; pre.frequency.value = 2600;
+  const wet = c.createGain(); wet.gain.value = 0.60;
+  AU.send = c.createGain(); AU.send.gain.value = 1;
+  AU.send.connect(pre); pre.connect(conv); conv.connect(wet); wet.connect(AU.master);
+
+  AU.music = c.createGain(); AU.music.gain.value = 0.34;
+  AU.music.connect(AU.dry); AU.music.connect(AU.send);
+
+  startAmbient();
+  startMusic();
+}
+addEventListener('pointerdown', auInit, { once:true });
+addEventListener('keydown', auInit, { once:true });
+
+function noiseBuffer(sec) {
+  const c = AU.ctx, b = c.createBuffer(1, Math.max(1, Math.ceil(c.sampleRate*sec)), c.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+  return b;
+}
+
+function out(node, sendAmt) {
+  node.connect(AU.dry);
+  if (sendAmt) { const g = AU.ctx.createGain(); g.gain.value = sendAmt;
+                 node.connect(g); g.connect(AU.send); }
+}
+
+function nz(dur, f0, f1, q, gain, type, send) {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime;
+  const s = c.createBufferSource(); s.buffer = noiseBuffer(dur);
+  const fl = c.createBiquadFilter(); fl.type = type || 'lowpass'; fl.Q.value = q;
+  fl.frequency.setValueAtTime(Math.max(40,f0), t);
+  fl.frequency.exponentialRampToValueAtTime(Math.max(40,f1), t+dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(gain, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
+  s.connect(fl); fl.connect(g); out(g, send === undefined ? 0.35 : send);
+  s.start(); s.stop(t+dur);
+}
+
+function tn(dur, f0, f1, gain, type, send) {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime;
+  const o = c.createOscillator(); o.type = type || 'sine';
+  o.frequency.setValueAtTime(Math.max(20,f0), t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(20,f1), t+dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t+0.005);
+  g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
+  o.connect(g); out(g, send === undefined ? 0.30 : send);
+  o.start(); o.stop(t+dur);
+}
+
+// A struck plate. The old version was five clean partials, which is a chime.
+// Real impact is almost all transient and noise: a click, a short filtered
+// burst, and a few badly detuned partials that die before you can hum them.
+function clank(size, gain, send) {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime;
+  const base = 900 / Math.max(0.2, size);
+
+  // transient: 6ms of unfiltered noise, the part your ear reads as "metal"
+  const s0 = c.createBufferSource(); s0.buffer = noiseBuffer(0.02);
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
+  const g0 = c.createGain();
+  g0.gain.setValueAtTime(gain * 1.5, t);
+  g0.gain.exponentialRampToValueAtTime(0.0008, t + 0.02);
+  s0.connect(hp); hp.connect(g0); out(g0, (send === undefined ? 0.3 : send) * 0.5);
+  s0.start(); s0.stop(t + 0.02);
+
+  // body: resonant noise, dropping fast
+  nz(0.09 * Math.max(0.5, size), base * 2.6, base * 0.5, 3.5, gain * 0.85, 'bandpass', send);
+  nz(0.30 * size, base * 0.9, base * 0.18, 1.0, gain * 0.30, 'lowpass', send);
+
+  // ring: only two partials, detuned off any interval, gone in ~120ms
+  [1.0, 2.37].forEach((m, i) => {
+    const o = c.createOscillator(); o.type = 'triangle';
+    o.frequency.setValueAtTime(base * m, t);
+    o.frequency.exponentialRampToValueAtTime(base * m * 0.82, t + 0.13);
+    const g = c.createGain();
+    g.gain.setValueAtTime(gain * (0.16 / (i + 1)), t);
+    g.gain.exponentialRampToValueAtTime(0.0006, t + 0.13 * Math.max(0.6, size));
+    o.connect(g); out(g, send === undefined ? 0.3 : send);
+    o.start(); o.stop(t + 0.16 * Math.max(0.6, size));
+  });
+}
+
+// A dull hit on something that is not metal: mostly low noise, no pitch at all.
+function thud(size, gain, send) {
+  if (!AU.ctx) return;
+  nz(0.05, 2600 / size, 700 / size, 2.0, gain * 0.8, 'bandpass', send);
+  nz(0.26 * size, 420 / size, 60, 0.9, gain, 'lowpass', send);
+  nz(0.10 * size, 140 / size, 45, 1.4, gain * 0.7, 'lowpass', send);
+}
+
+// Ring-modulated formant burst — a machine trying to make a vocal sound.
+function robo(dur, f0, f1, modHz, gain, formants, send) {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime;
+  const carr = c.createOscillator(); carr.type = 'sawtooth';
+  carr.frequency.setValueAtTime(f0, t);
+  carr.frequency.exponentialRampToValueAtTime(Math.max(20,f1), t+dur);
+
+  const ring = c.createGain(); ring.gain.value = 0;      // driven entirely by the modulator
+  const mod = c.createOscillator(); mod.type = 'square'; mod.frequency.value = modHz;
+  const depth = c.createGain(); depth.gain.value = 1;
+  mod.connect(depth); depth.connect(ring.gain);
+  carr.connect(ring);
+
+  const env = c.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.linearRampToValueAtTime(gain, t + dur*0.12);
+  env.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+
+  (formants || [520, 1180, 2400]).forEach((f, i) => {
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = f; bp.Q.value = 7 + i*3;
+    const bg = c.createGain(); bg.gain.value = 1 / (i + 1);
+    ring.connect(bp); bp.connect(bg); bg.connect(env);
+  });
+  out(env, send === undefined ? 0.55 : send);
+  carr.start(); mod.start(); carr.stop(t+dur); mod.stop(t+dur);
+}
+
+const SYNTH = {
+  step:  s => { nz(0.14*s, 2000, 240, 1.0, 0.13, 'lowpass', 0.25);
+                tn(0.20*s, 96/s, 42/s, 0.18, 'sine', 0.2);
+                nz(0.05, 5200, 2600, 7, 0.035, 'bandpass', 0.2); },   // grit underfoot
+  turn:  () => nz(0.12, 2600, 700, 3.0, 0.05, 'bandpass'),
+  bump:  () => { thud(1.4, 0.16); clank(1.6, 0.10); },
+  swap:  () => { nz(0.04, 3600, 1500, 10, 0.09, 'bandpass', 0.2);
+                 tn(0.10, 700, 380, 0.06, 'square', 0.2);
+                 robo(0.14, 150, 120, 62, 0.05, [420, 900, 1900], 0.3); },
+
+  cut:   () => { nz(0.26, 6400, 520, 1.2, 0.20, 'bandpass', 0.5);
+                 tn(0.10, 2400, 700, 0.05, 'sawtooth'); },
+  slam:  () => { thud(2.6, 0.32); clank(2.2, 0.18);
+                 nz(0.26, 640, 80, 0.9, 0.14, 'lowpass', 0.5); },
+  thrust:() => { nz(0.09, 8200, 2600, 9, 0.16, 'bandpass', 0.4);
+                 tn(0.07, 1800, 900, 0.07, 'square'); },
+  pulse: () => { tn(0.30, 520, 960, 0.08, 'triangle', 0.6);
+                 tn(0.36, 790, 1340, 0.05, 'sine', 0.6);
+                 nz(0.30, 3000, 1200, 4, 0.03, 'bandpass', 0.6); },
+
+  clank: () => clank(1.0, 0.20),
+  crit:  () => { clank(0.55, 0.34, 0.6); thud(1.1, 0.22);
+                 nz(0.20, 5200, 900, 5, 0.14, 'bandpass', 0.6); },
+  crush: () => { nz(0.42, 900, 130, 1.6, 0.16, 'lowpass', 0.5);
+                 nz(0.12, 3400, 900, 5, 0.10, 'bandpass', 0.4);
+                 tn(0.34, 88, 52, 0.10, 'square', 0.4); },
+  hurt:  () => { thud(1.6, 0.30); clank(1.4, 0.20);
+                 nz(0.34, 700, 120, 0.7, 0.14, 'lowpass', 0.5); },
+  kill:  () => { thud(3.0, 0.30, 0.6); clank(2.6, 0.22, 0.7);
+                 nz(0.75, 1300, 60, 0.6, 0.16, 'lowpass', 0.7);
+                 setTimeout(() => clank(3.4, 0.15, 0.8), 190);
+                 setTimeout(() => { clank(2.0, 0.09, 0.8); thud(2.2, 0.10, 0.8); }, 430); },
+  print: () => { tn(0.55, 170, 300, 0.09, 'sawtooth'); nz(0.60, 1100, 340, 2, 0.09);
+                 setTimeout(() => { tn(0.24, 620, 300, 0.11, 'square');
+                                    robo(0.30, 190, 150, 74, 0.07); }, 500); },
+
+  // one voice per machine — you should know what is near you with your eyes shut
+  seam:  () => { robo(0.42, 118, 82, 41, 0.13, [340, 760, 1500]); nz(0.30, 700, 220, 2, 0.06); },
+  dray:  () => { tn(0.5, 58, 52, 0.10, 'square', 0.3); nz(0.4, 300, 120, 1.5, 0.05); },
+  tally: () => { for (let i=0;i<5;i++) setTimeout(() =>
+                   tn(0.05, 2400 + i*520, 3200 + i*520, 0.055, 'square', 0.5), i*42); },
+  seal:  () => { nz(0.55, 4200, 900, 1.4, 0.14, 'bandpass', 0.5);   // hydraulic release
+                 setTimeout(() => clank(1.2, 0.24, 0.4), 340); },
+  brk:   () => { tn(0.44, 78, 54, 0.24, 'square'); nz(0.44, 520, 150, 1.2, 0.14);
+                 robo(0.36, 88, 70, 29, 0.10, [260, 620, 1250]); },
+};
+
+// ── Sample bank ────────────────────────────────────────────────
+// Every synthesised cue above can be replaced by a real recording. Drop an
+// audio file named after the key (step.wav, crush.mp3, music_combat.ogg …) and
+// it takes over; anything not supplied keeps the synth, so the game is never
+// half-silent while the sound pass is in progress.
+const SFXBUF = {};                 // key -> AudioBuffer
+const LOOPS  = {};                 // key -> { src, gain }
+
+function playBuf(key, gain) {
+  const b = SFXBUF[key]; if (!b || !AU.ctx) return;
+  const src = AU.ctx.createBufferSource(); src.buffer = b;
+  const g = AU.ctx.createGain(); g.gain.value = gain === undefined ? 1 : gain;
+  src.connect(g); out(g, 0.35);
+  src.start();
+}
+
+function startLoop(key, node, gain) {
+  if (!SFXBUF[key] || !AU.ctx || LOOPS[key]) return;
+  const src = AU.ctx.createBufferSource();
+  src.buffer = SFXBUF[key]; src.loop = true;
+  const g = AU.ctx.createGain(); g.gain.value = gain === undefined ? 1 : gain;
+  src.connect(g); g.connect(node || AU.music);
+  src.start();
+  LOOPS[key] = { src, gain: g };
+}
+
+// A sample wins over the synth for the same key, and nothing else changes.
+const SFX = {};
+for (const k in SYNTH) SFX[k] = (...a) => SFXBUF[k] ? playBuf(k) : SYNTH[k](...a);
+
+async function loadSound(key, data) {
+  auInit();
+  if (!AU.ctx) return false;
+  try {
+    const buf = data instanceof ArrayBuffer ? data : await data.arrayBuffer();
+    SFXBUF[key] = await AU.ctx.decodeAudioData(buf);
+    if (/^(music_|amb_)/.test(key)) rewireLoops();
+    return true;
+  } catch (err) { console.error('sound', key, err); return false; }
+}
+
+// Music and ambience are loops, so they get wired into the mixer rather than
+// fired. A supplied loop silences the generative layer it replaces.
+function rewireLoops() {
+  if (!AU.ctx || !AU.amb) return;
+  startLoop('music_ambient',  AU.amb, 1);
+  startLoop('music_approach', AU.apr, 1);
+  startLoop('music_combat',   AU.cmb, 1);
+  startLoop('amb_drone', AU.dry, 0.5);
+  startLoop('amb_wind',  AU.dry, 0.5);
+  if (SFXBUF.music_ambient)  AU.genAmb = false;
+  if (SFXBUF.music_combat)   AU.genCmb = false;
+}
+
+function tellFor(e) {
+  const id = e && e.T ? e.T.id : 'SEAM';
+  if (id === 'TALLY') return SFX.tally();
+  if (id === 'SEAL')  return SFX.seal();
+  if (id === 'BREAK') return SFX.brk();
+  if (id === 'DRAY')  return SFX.dray();
+  return SFX.seam();
+}
+
+// ── Ambient bed ────────────────────────────────────────────────
+function startAmbient() {
+  const c = AU.ctx;
+  const dg = c.createGain(); dg.gain.value = 0.050; out(dg, 0.5);
+  const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = 170; lp.connect(dg);
+  [40.6, 41.4, 61.5].forEach(f => {
+    const o = c.createOscillator(); o.type='sawtooth'; o.frequency.value = f;
+    o.connect(lp); o.start();
+  });
+
+  const ws = c.createBufferSource(); ws.buffer = noiseBuffer(4); ws.loop = true;
+  const wf = c.createBiquadFilter(); wf.type='bandpass'; wf.Q.value = 0.8; wf.frequency.value = 420;
+  const wg = c.createGain(); wg.gain.value = 0.026;
+  ws.connect(wf); wf.connect(wg); out(wg, 0.4); ws.start();
+  const lfo = c.createOscillator(); lfo.frequency.value = 0.06;
+  const lg = c.createGain(); lg.gain.value = 260;
+  lfo.connect(lg); lg.connect(wf.frequency); lfo.start();
+
+  scheduleAmbientEvent();
+}
+
+// Spontaneous machinery. Everything here is distant and none of it is for you.
+const AMB_EVENTS = [
+  () => { if (Z && Z.boss) return;                   // its floor has its own sounds
+          const n = 2 + (Math.random()*3|0);
+          for (let i=0;i<n;i++) setTimeout(() => clank(2.6+Math.random(), 0.055, 0.9),
+                                           i*(180 + Math.random()*140)); },
+  () => nz(2.6 + Math.random()*2, 300, 90, 1.6, 0.032, 'lowpass', 0.8),  // heavy machine spins up
+  () => { nz(0.9, 5000, 1200, 1.1, 0.045, 'bandpass', 0.7); },           // pressure release
+  () => { for (let i=0;i<7;i++) setTimeout(() =>                          // chain rattle
+            nz(0.05, 3400+Math.random()*2400, 1600, 8, 0.030, 'bandpass', 0.8),
+            i*(55+Math.random()*70)); },
+  () => { tn(1.9, 44, 39, 0.055, 'triangle', 0.9);                        // structure groaning
+          nz(1.9, 180, 70, 1.2, 0.030, 'lowpass', 0.9); },
+  () => { tn(0.5, 780, 700, 0.020, 'sine', 0.9);                          // servo whine, far off
+          setTimeout(() => tn(0.4, 700, 820, 0.016, 'sine', 0.9), 520); },
+  () => clank(4.5, 0.045, 1.0),                                           // one enormous impact
+  () => { for (let i=0;i<3;i++) setTimeout(() =>                          // dripping
+            tn(0.07, 1500+Math.random()*700, 600, 0.022, 'sine', 0.9),
+            i*(400+Math.random()*700)); },
+];
+
+// While the boss is still asleep you hear it doing its job somewhere ahead:
+// a pile hammer on a slow cycle and a cutting disc spinning up. Both stop the
+// moment it turns round, and that silence is the actual warning.
+let workshopOn = false, workshopTimer = null;
+
+function hammerBlow(far) {
+  const g = far ? 0.075 : 0.13;
+  thud(3.4, g, 0.9);
+  clank(3.0, g * 0.8, 0.95);
+  setTimeout(() => nz(0.9, 420, 90, 1.1, g * 0.4, 'lowpass', 0.95), 70);
+}
+
+function sawWhine() {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime, dur = 1.6 + Math.random() * 1.4;
+  const o = c.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(180, t);
+  o.frequency.exponentialRampToValueAtTime(1150, t + dur * 0.35);
+  o.frequency.exponentialRampToValueAtTime(760, t + dur);
+  const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 7;
+  bp.frequency.value = 1500;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.055, t + dur * 0.3);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  o.connect(bp); bp.connect(g); out(g, 0.9);
+  o.start(); o.stop(t + dur);
+  nz(dur, 3200, 1400, 4, 0.030, 'bandpass', 0.9);
+}
+
+function scheduleWorkshop() {
+  clearTimeout(workshopTimer);
+  workshopTimer = setTimeout(() => {
+    if (workshopOn && AU.ctx) {
+      if (Math.random() < 0.62) {
+        const n = 2 + (Math.random() * 3 | 0);      // a run of blows, then a pause
+        for (let i = 0; i < n; i++)
+          setTimeout(() => { if (workshopOn) hammerBlow(true); },
+                     i * (520 + Math.random() * 160));
+      } else sawWhine();
+    }
+    scheduleWorkshop();
+  }, 2200 + Math.random() * 2600);
+}
+scheduleWorkshop();
+
+// The roar. Not an animal — a machine changing task badly.
+function bossRoar() {
+  if (!AU.ctx) return;
+  const c = AU.ctx, t = c.currentTime;
+  for (const [f0, f1, d, g] of [[62, 28, 2.4, 0.30], [93, 41, 2.0, 0.18]]) {
+    const o = c.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + d);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(160, t + d);
+    const gg = c.createGain();
+    gg.gain.setValueAtTime(0.0001, t);
+    gg.gain.linearRampToValueAtTime(g, t + 0.12);
+    gg.gain.exponentialRampToValueAtTime(0.0008, t + d);
+    o.connect(lp); lp.connect(gg); out(gg, 1.0);
+    o.start(); o.stop(t + d + 0.1);
+  }
+  robo(1.5, 74, 44, 23, 0.16, [190, 460, 980], 1.0);   // it tries to speak
+  nz(2.2, 1600, 120, 0.8, 0.16, 'lowpass', 1.0);
+  setTimeout(() => { clank(3.6, 0.24, 0.9); thud(3.6, 0.22, 0.9); }, 260);
+  setTimeout(() => clank(2.8, 0.16, 0.9), 700);
+}
+
+function scheduleAmbientEvent() {
+  const wait = 2600 + Math.random()*5200;
+  setTimeout(() => {
+    if (AU.ctx) AMB_EVENTS[(Math.random()*AMB_EVENTS.length)|0]();
+    scheduleAmbientEvent();
+  }, wait);
+}
+
+// ── Music ──────────────────────────────────────────────────────
+// Two generative layers that cross-fade. Ambient is a slow chord that never
+// resolves; combat is a piston pulse with a semitone rub on top.
+function musicVoice(freq, type, gain) {
+  const c = AU.ctx;
+  const o = c.createOscillator(); o.type = type; o.frequency.value = freq;
+  const g = c.createGain(); g.gain.value = 0;
+  o.connect(g); g.connect(AU.music); o.start();
+  return { o, g, base: gain };
+}
+
+function startMusic() {
+  const c = AU.ctx;
+  AU.amb = c.createGain(); AU.amb.gain.value = 1; AU.amb.connect(AU.music);
+  AU.cmb = c.createGain(); AU.cmb.gain.value = 0; AU.cmb.connect(AU.music);
+  AU.apr = c.createGain(); AU.apr.gain.value = 0; AU.apr.connect(AU.music);
+
+  // approach: one low note breathing, and a semitone above it that never
+  // resolves. No pulse — the pulse is what arrives when it turns round.
+  [[55, 'sawtooth', 0.09], [58.27, 'sawtooth', 0.055], [110, 'triangle', 0.03]]
+    .forEach(([f, ty, g], i) => {
+      const o = c.createOscillator(); o.type = ty; o.frequency.value = f;
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
+      const gg = c.createGain(); gg.gain.value = g;
+      const lfo = c.createOscillator(); lfo.frequency.value = 0.09 + i * 0.04;
+      const ld = c.createGain(); ld.gain.value = g * 0.8;
+      lfo.connect(ld); ld.connect(gg.gain); lfo.start();
+      o.connect(lp); lp.connect(gg); gg.connect(AU.apr); o.start();
+    });
+
+  // ambient chord — low D minor-ish, drifting
+  const AMB = [73.4, 87.3, 110.0, 146.8];
+  AMB.forEach((f, i) => {
+    const o = c.createOscillator(); o.type = i > 1 ? 'triangle' : 'sine'; o.frequency.value = f;
+    const g = c.createGain(); g.gain.value = 0.10 / (i*0.5 + 1);
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.017 + i*0.011;
+    const ld = c.createGain(); ld.gain.value = g.gain.value * 0.85;
+    lfo.connect(ld); ld.connect(g.gain); lfo.start();
+    o.connect(g); g.connect(AU.amb); o.start();
+  });
+  // an occasional high bell, very sparse
+  setInterval(() => {
+    if (!AU.ctx || !AU.genAmb || AU.mode !== 'ambient' || Math.random() > 0.35) return;
+    const n = [587.3, 698.5, 880.0][(Math.random()*3)|0];
+    tn(3.4, n, n*0.995, 0.022, 'sine', 1.0);
+  }, 9000);
+
+  // combat: dark trance. 140bpm, 16 steps, four on the floor, acid line in
+  // D minor, and a semitone rub in the pad that never resolves.
+  const SCALE = [0, 3, 5, 7, 10, 12, 15];          // D natural minor, useful degrees
+  const ROOT  = 36.71;                              // D1
+  const ACID  = [0,0,3,0, 5,0,3,7, 0,0,10,0, 7,5,3,0];
+  const OPEN  = [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,1,0];
+  let step = 0;
+
+  setInterval(() => {
+    if (!AU.ctx || AU.mode !== 'combat') return;
+    const c2 = AU.ctx, t = c2.currentTime, k = step % 16;
+    step++;
+
+    // kick on every quarter — pitch drop plus a click, no tone left after 90ms
+    if (k % 4 === 0) {
+      const o = c2.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(150, t);
+      o.frequency.exponentialRampToValueAtTime(38, t + 0.09);
+      const g = c2.createGain();
+      g.gain.setValueAtTime(0.34, t);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + 0.26);
+      o.connect(g); g.connect(AU.cmb); o.start(); o.stop(t + 0.28);
+      const s2 = c2.createBufferSource(); s2.buffer = noiseBuffer(0.012);
+      const cg = c2.createGain(); cg.gain.setValueAtTime(0.10, t);
+      cg.gain.exponentialRampToValueAtTime(0.0008, t + 0.012);
+      s2.connect(cg); cg.connect(AU.cmb); s2.start(); s2.stop(t + 0.012);
+    }
+
+    // offbeat hat
+    if (k % 4 === 2) {
+      const s3 = c2.createBufferSource(); s3.buffer = noiseBuffer(0.05);
+      const hp = c2.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7200;
+      const g = c2.createGain();
+      g.gain.setValueAtTime(0.055, t);
+      g.gain.exponentialRampToValueAtTime(0.0006, t + 0.045);
+      s3.connect(hp); hp.connect(g); g.connect(AU.cmb);
+      s3.start(); s3.stop(t + 0.05);
+    }
+
+    // acid: saw through a resonant filter with a per-note envelope
+    const deg = ACID[k];
+    const f = ROOT * Math.pow(2, SCALE[deg % SCALE.length] / 12) * (deg >= 12 ? 2 : 1);
+    const o = c2.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+    const lp = c2.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 13;
+    const peak = OPEN[k] ? 2400 : 900;
+    lp.frequency.setValueAtTime(peak, t);
+    lp.frequency.exponentialRampToValueAtTime(240, t + 0.19);
+    const g = c2.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.085, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + (OPEN[k] ? 0.22 : 0.11));
+    o.connect(lp); lp.connect(g); g.connect(AU.cmb);
+    o.start(); o.stop(t + 0.25);
+
+    // the rub: two detuned saws a semitone apart, held across the bar
+    if (k === 0) {
+      [ROOT*2, ROOT*2*Math.pow(2,1/12)].forEach((fr, i) => {
+        const p = c2.createOscillator(); p.type = 'sawtooth'; p.frequency.value = fr * 2;
+        const pf = c2.createBiquadFilter(); pf.type = 'lowpass'; pf.frequency.value = 620;
+        const pg = c2.createGain();
+        pg.gain.setValueAtTime(0.0001, t);
+        pg.gain.linearRampToValueAtTime(0.030 / (i+1), t + 0.7);
+        pg.gain.linearRampToValueAtTime(0.0001, t + 2.6);
+        p.connect(pf); pf.connect(pg); pg.connect(AU.cmb);
+        p.start(); p.stop(t + 2.7);
+      });
+    }
+
+    // a riser every other bar, so the loop has somewhere to go
+    if (k === 12 && step % 32 > 16) {
+      const r = c2.createBufferSource(); r.buffer = noiseBuffer(1.0);
+      const bp = c2.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 3;
+      bp.frequency.setValueAtTime(500, t);
+      bp.frequency.exponentialRampToValueAtTime(6000, t + 0.95);
+      const rg = c2.createGain();
+      rg.gain.setValueAtTime(0.0001, t);
+      rg.gain.linearRampToValueAtTime(0.055, t + 0.9);
+      rg.gain.exponentialRampToValueAtTime(0.0006, t + 1.0);
+      r.connect(bp); bp.connect(rg); rg.connect(AU.cmb);
+      r.start(); r.stop(t + 1.0);
+    }
+  }, 107);                                          // 16ths at 140bpm
+}
+
+function musicSet(mode) {
+  if (!AU.ctx || !AU.amb || AU.mode === mode) return;
+  AU.mode = mode;
+  const t = AU.ctx.currentTime, dur = mode === 'combat' ? 0.9 : 2.6;
+  const set = (node, v) => {
+    node.gain.cancelScheduledValues(t);
+    node.gain.setValueAtTime(node.gain.value, t);
+    node.gain.linearRampToValueAtTime(v, t + dur);
+  };
+  set(AU.amb, mode === 'ambient' ? 1 : mode === 'approach' ? 0.20 : 0.08);
+  set(AU.apr, mode === 'approach' ? 1 : 0);
+  set(AU.cmb, mode === 'combat' ? 1 : 0);
+}
+
+// ── Player state ───────────────────────────────────────────────
+
+const P = { x:1, y:1, face:0, moving:false, turning:false };  // face 0=N(-z) 1=E 2=S 3=W
+const DIR = [[0,-1],[1,0],[0,1],[-1,0]];
+let anim = null, queued = null;
+
+// ── Bodies ─────────────────────────────────────────────────────
+// Four shells, one occupant. The active body swings and eats every hit.
+// The other three are furniture that happens to be shaped like you.
+// Four of the eight archetypes, named as facility functions.
+const ARCH = {
+  BREACH:   { integ:60,  dmg:30, punish:2.2, eye:1.06, fx:'cut',    note:'cuts. thin.' },
+  BALLAST:  { integ:150, dmg:10, punish:1.6, eye:0.86, fx:'slam',   note:'absorbs. slow.' },
+  VECTOR:   { integ:80,  dmg:16, punish:4.5, eye:1.00, fx:'thrust', note:'waits for the opening.' },
+  CONDUIT:  { integ:70,  dmg:0,  punish:1,   eye:0.96, fx:'pulse', repair:34, mends:4,
+              note:'mends. cannot strike.' },
+};
+const LOADOUT = ['BALLAST','BREACH','VECTOR','CONDUIT'];
+
+let bodies = [], active = 0, hurtT = 0, material = 2;
+const vitalsEl = document.getElementById('vitals'), deadEl = document.getElementById('dead');
+
+// Pixel portraits — no faces, only optics and exposed cabling. Asymmetric on purpose.
+function drawPortrait(kind) {
+  const N = 40, [c,x] = mkc(N,N);
+  const BONE='#a49d8c', BN_D='#6b6457', BN_L='#cdc5b0', VOID='#0b0b09',
+        DARK='#25231c', AMB='#c9902f';
+  px(x,0,0,N,N,'#0d0d0c');
+  for (let i=0;i<150;i++) px(x,(Math.random()*N)|0,(Math.random()*N)|0,1,1,'#131311');
+
+  if (kind==='BALLAST') {                     // wide plated skull, one slit, heavy jaw
+    px(x,5,10,30,24,BN_D); px(x,5,10,30,3,BN_L); px(x,3,14,3,15,BONE); px(x,34,14,3,15,BONE);
+    px(x,9,19,22,5,VOID);  px(x,10,20,20,2,AMB);
+    px(x,11,29,18,4,BONE); px(x,11,29,18,1,BN_L); for (let i=13;i<28;i+=3) px(x,i,30,1,3,VOID);
+    px(x,7,6,6,5,DARK); px(x,27,7,5,4,DARK);
+  } else if (kind==='BREACH') {               // narrow, elongated, single forward lens
+    px(x,13,3,14,32,BN_D); px(x,13,3,14,2,BN_L);
+    px(x,10,9,3,20,BONE); px(x,27,9,3,20,BONE);
+    px(x,15,13,10,10,VOID); px(x,17,15,6,6,AMB); px(x,18,16,2,2,BN_L);
+    px(x,14,27,12,3,DARK);
+    for (let i=0;i<4;i++) px(x,29+i,12+i*4,7-i,2,DARK);   // cabling, one side only
+  } else if (kind==='VECTOR') {               // split visor, blade crest, off-centre
+    px(x,7,8,26,26,BN_D); px(x,7,8,26,2,BN_L);
+    px(x,18,4,4,30,BONE);                                  // crest ridge
+    px(x,10,17,7,5,VOID); px(x,23,17,7,5,VOID);
+    px(x,11,18,4,2,AMB); px(x,26,18,2,2,AMB);
+    px(x,5,12,2,16,BONE); px(x,33,12,2,16,BONE);
+    px(x,12,29,16,3,DARK); px(x,4,6,5,4,DARK);
+  } else {                                    // CONDUIT — cluster of small optics, cable crown
+    px(x,8,10,24,24,BN_D); px(x,9,7,22,3,BN_L); px(x,6,14,2,16,BONE); px(x,32,14,2,16,BONE);
+    for (const [a,b] of [[12,16],[18,15],[24,16],[15,23],[21,23],[27,22]]) {
+      px(x,a,b,4,4,VOID); px(x,a+1,b+1,2,2,AMB);
+    }
+    for (let i=0;i<5;i++) px(x,10+i*4, 3+((i%2)*2), 2, 5, DARK);   // cable crown
+    px(x,13,30,14,3,BONE);
+  }
+  px(x,0,0,N,1,VOID); px(x,0,N-1,N,1,VOID); px(x,0,0,1,N,VOID); px(x,N-1,0,1,N,VOID);
+  return c;
+}
+const PORTRAIT = {}; for (const k in ARCH) PORTRAIT[k] = drawPortrait(k);
+let portraitSize = [40, 40];
+
+function resetBodies() {
+  bodies = LOADOUT.map(k => ({ k, a:ARCH[k], hp:ARCH[k].integ, held:false,
+                               mends: ARCH[k].mends || 0 }));
+  active = 0;
+  vitalsEl.innerHTML = '';
+  bodies.forEach((b,i) => {
+    const cel = document.createElement('div'); cel.className = 'cel';
+    const ic = document.createElement('div'); ic.className = 'ico';
+    ic.innerHTML = '<span class="clamp">CLAMPED</span>'; cel.appendChild(ic);
+    const pf = document.createElement('div'); pf.className = 'pf';
+    const cv = document.createElement('canvas');
+    cv.width = portraitSize[0]; cv.height = portraitSize[1];
+    cv.style.height = Math.round(112 * portraitSize[1]/portraitSize[0]) + 'px';
+    pf.appendChild(cv);
+    const ne = document.createElement('div'); ne.className = 'noent'; pf.appendChild(ne);
+    const of = document.createElement('div'); of.className = 'off';
+    of.textContent = 'OFFLINE'; pf.appendChild(of);
+    cel.appendChild(pf);
+    b.cv = cv; b.glitch = 0; b.dirty = true;
+    const bar = document.createElement('div'); bar.className='bar';
+    bar.innerHTML = '<div class="seg"><i></i></div>'; cel.appendChild(bar);
+    const nm = document.createElement('div'); nm.className='nm';
+    nm.textContent = b.k; cel.appendChild(nm);
+    const n = document.createElement('div'); n.className='n';
+    n.innerHTML = '<span>'+(i+1)+'</span><span class="hpv"></span>'; cel.appendChild(n);
+    const cd = document.createElement('div'); cd.className = 'code';
+    cd.textContent = 'SH-0' + (i+1); cel.appendChild(cd);
+    vitalsEl.appendChild(cel);
+  });
+  drawVitals();
+}
+
+// A portrait is repainted only while something is wrong with it. Clean shells
+// are drawn once and left alone.
+function paintPortrait(i, now) {
+  const b = bodies[i]; if (!b || !b.cv) return;
+  const cv = b.cv, x = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const src = PORTRAIT[b.k];
+  x.imageSmoothingEnabled = false;
+
+  if (b.hp <= 0) {                                  // dead signal, always moving
+    x.fillStyle = '#0a0a09'; x.fillRect(0,0,W,H);
+    for (let i2=0;i2<150;i2++) {
+      const y = (Math.random()*H)|0, w = 4 + Math.random()*W*0.5;
+      const v = (Math.random()*90)|0;
+      x.fillStyle = 'rgb('+v+','+v+','+(v+4)+')';
+      x.fillRect((Math.random()*W)|0, y, w, 1 + (Math.random()*2|0));
+    }
+    x.globalAlpha = 0.16; x.drawImage(src, 0, 0, W, H); x.globalAlpha = 1;
+    return;
+  }
+
+  const gk = (now - b.glitch) / 420;
+  if (gk >= 0 && gk < 1) {                          // hit: torn scanlines, channel split
+    const amt = (1 - gk);
+    x.clearRect(0,0,W,H);
+    x.globalAlpha = 0.55 * amt;
+    x.drawImage(src, -7*amt, 0, W, H);              // red-ish ghost to the left
+    x.globalAlpha = 1;
+    x.drawImage(src, 0, 0, W, H);
+    const slices = 5 + (amt*7|0);
+    for (let n=0;n<slices;n++) {
+      const sy = (Math.random()*H)|0, sh = 2 + (Math.random()*10|0);
+      const dx = (Math.random()-0.5) * 26 * amt;
+      x.drawImage(cv, 0, sy, W, sh, dx, sy, W, sh);
+    }
+    for (let n=0;n<7;n++) {
+      x.fillStyle = 'rgba(192,85,58,'+(0.30*amt)+')';
+      x.fillRect(0, (Math.random()*H)|0, W, 1 + (Math.random()*3|0));
+    }
+    b.dirty = true;
+    return;
+  }
+
+  if (b.dirty) {                                     // settle back to clean, once
+    x.clearRect(0,0,W,H); x.drawImage(src, 0, 0, W, H);
+    b.dirty = false;
+  }
+}
+
+function paintPortraits(now) {
+  for (let i=0;i<bodies.length;i++) {
+    const b = bodies[i];
+    if (!b || !b.cv) continue;
+    if (b.hp <= 0) { if (now - (b.lastPaint||0) > 70) { paintPortrait(i, now); b.lastPaint = now; } }
+    else if (b.dirty || (now - b.glitch) < 460) paintPortrait(i, now);
+  }
+}
+
+function drawVitals() {
+  bodies.forEach((b,i) => {
+    const cel = vitalsEl.children[i];
+    cel.className = 'cel' + (i===active ? ' act' : '') + (b.held ? ' held' : '') +
+      (b.hp <= 0 ? ' out' : (b.hp < b.a.integ*0.35 ? ' low' : ''));
+    if (b.shake) { cel.classList.remove('hit'); void cel.offsetWidth;  // restart it
+                   cel.classList.add('hit'); b.shake = false; }
+    cel.querySelector('i').style.width = Math.max(0, b.hp/b.a.integ*100) + '%';
+    cel.querySelector('.hpv').textContent = Math.max(0, Math.round(b.hp));
+    const nm = cel.querySelector('.nm');
+    if (nm) nm.textContent = b.a.mends ? b.k + ' \u00d7' + b.mends : b.k;
+  });
+}
+
+const A = () => bodies[active];
+const alive = () => bodies.some(b => b.hp > 0);
+function eyeY() { return C.eyeHeight * (A() ? A().a.eye : 1); }
+
+function damagePlayer(d) { damageShell(active, d); }
+
+function damageShell(i, d, src) {
+  const b = bodies[i]; if (!b || b.hp <= 0) return;
+  b.hp = Math.max(0, b.hp - d); hurtT = performance.now();
+  (src === 'crush' ? SFX.crush : SFX.hurt)();
+  b.glitch = hurtT; b.dirty = true; b.shake = true;
+  if (src === 'crush') {
+    if (b.hp <= 0) say('<b>'+b.k+'</b> crushed — shell lost', 'bad');
+    else if (b.hp < b.a.integ * 0.35) say('<b>'+b.k+'</b> is being crushed', 'bad');
+  } else {
+    say('<b>'+b.k+'</b> takes '+Math.round(d)+(b.hp<=0 ? ' — shell lost' : ''),
+        b.hp<=0 ? 'bad' : 'warn');
+  }
+  screenFlash(flashEl, String(Math.min(0.9, 0.3 + d/60)), 320);
+  const dd = DIR[P.face];
+  burst(rig.position.x + dd[0]*Z.tile*0.35, rig.position.y - 0.15,
+        rig.position.z + dd[1]*Z.tile*0.35, 20, [1,0.3,0.14], 2.6, 0.6);
+  if (b.hp <= 0) {                          // shell down — the clamp lets go of a corpse
+    b.held = false;
+    for (const e of enemies) if (e.holds === i) e.holds = -1;
+    if (i === active) {
+      const next = bodies.findIndex(v => v.hp > 0 && !v.held);
+      if (next >= 0) active = next;
+      else { const any = bodies.findIndex(v => v.hp > 0); if (any >= 0) active = any; }
+    }
+  }
+  drawVitals();
+  if (!alive()) {
+    deadEl.style.display = 'flex'; fade.style.opacity = '0.86';
+    setTimeout(() => { deadEl.style.display='none'; fade.style.opacity='0';
+      for (const k in ZSTATE) delete ZSTATE[k];        // a new sortie, a clean structure
+      arriveAt = null;
+      rnd = mulberry32(seed); buildZone(); placeInstant(); }, 1600);
+  }
+}
+
+function inhabit(i) {
+  if (!bodies[i] || bodies[i].hp <= 0) { bump(); return; }
+  if (bodies[i].held) {                     // reaching for it pulls it out of the clamp
+    bodies[i].held = false;
+    for (const e of enemies) if (e.holds === i) { e.holds = -1; e.state = 'recover'; e.timer = 1; }
+    drawVitals(); SFX.clank();
+    say('tore <b>'+bodies[i].k+'</b> loose', 'good');
+    return;
+  }
+  if (i === active) { bump(); return; }
+  active = i; drawVitals(); SFX.swap();
+  say('inhabiting <b>'+bodies[i].k+'</b>', 'dim');
+}
+
+function printBodies() {                    // stand on a terminal, spend material
+  const f = facing();
+  if (!f || (f.c !== 'P' && f.c !== 'T')) { bump(); return; }
+  const key = f.x + ',' + f.y;
+  if (zstate().spent.has(key)) {
+    say('this one is spent', 'warn'); note('SPENT'); bump(); return;
+  }
+  if (material <= 0) { say('no stock', 'warn'); bump(); return; }
+  zstate().spent.add(key);
+  material--; SFX.print();
+  say('printed — all shells restored · this one is spent', 'good');
+  for (const b of bodies) b.hp = b.a.integ;
+  drawVitals();
+}
+
+function faceOpen() {                       // never start staring at a wall
+  for (let d=0; d<4; d++) if (canEnter(P.x+DIR[d][0], P.y+DIR[d][1])) return d;
+  return 0;
+}
+
+// Find the door we arrived through and stand in front of it, looking away.
+function arrivalSpot() {
+  if (!arriveAt) return null;
+  const H = grid.length, W = grid[0].length;
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    if (grid[y][x] !== arriveAt) continue;
+    for (let d=0; d<4; d++) {
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (canEnter(nx, ny)) return { x:nx, y:ny, face:d };   // d points away from it
+    }
+  }
+  return null;
+}
+
+function placeInstant() {
+  logged = false; seen = zstate().seen; visible = new Set();
+  if (typeof logEl !== 'undefined' && logEl) {
+    logEl.innerHTML = '';
+    say('printed. no task assigned.', 'dim');
+  }
+  const arr = arrivalSpot(); arriveAt = null;
+  P.x = arr ? arr.x : spawn.x;
+  P.y = arr ? arr.y : spawn.y;
+  anim = null; queued = null;
+  tickClock = null; tickBusy = false; tickNo = 0; material = 2;
+  resetBodies();
+  P.moving = P.turning = false;
+  P.face = arr ? arr.face : faceOpen();
+  rig.position.set(P.x*Z.tile, C.eyeHeight, P.y*Z.tile);
+  rig.rotation.y = -P.face * Math.PI/2;
+  head.position.set(0,0,0); head.rotation.set(0,0,0);
+}
+
+function stepDuration() { return C.stepBaseDur * Math.pow(Z.tile/3, C.stepScaleExp); }
+
+const easeOut = k => 1 - Math.pow(1-k, 2.4);
+
+function tryMove(rel) { // 0 fwd, 1 right, 2 back, 3 left
+  const d = DIR[(P.face + rel) & 3];
+  const nx = P.x + d[0], ny = P.y + d[1];
+  if (!canEnter(nx, ny) || occupied(nx, ny)) { bump(); return; }
+  const t = Z.tile;
+  anim = { kind:'move', t0:performance.now(), dur:stepDuration(),
+    from:new THREE.Vector3(P.x*t, rig.position.y, P.y*t),
+    to:  new THREE.Vector3(nx*t,  rig.position.y, ny*t) };
+  P.x = nx; P.y = ny; P.moving = true;
+  SFX.step(Math.pow(Z.tile/3, 0.5));
+}
+
+function tryTurn(dir) {
+  const from = rig.rotation.y;
+  P.face = (P.face + dir + 4) & 3;
+  anim = { kind:'turn', t0:performance.now(), dur:C.turnDur, from, to: from - dir*Math.PI/2 };
+  SFX.turn();
+  P.turning = true;
+}
+
+let bumpT = 0;
+function bump() { bumpT = performance.now(); SFX.bump(); }
+
+function updateAnim(now) {
+  if (anim) {
+    const k = Math.min(1, (now - anim.t0) / anim.dur);
+    const e = easeOut(k);
+    if (anim.kind === 'move') {
+      rig.position.lerpVectors(anim.from, anim.to, e);
+      const s = Math.sin(k*Math.PI);
+      head.position.y = -C.bob * Z.tile/3 * s;
+      head.rotation.x = THREE.MathUtils.degToRad(C.lurch) * Math.sin(k*Math.PI*2) * -1;
+    } else {
+      rig.rotation.y = anim.from + (anim.to - anim.from) * e;
+      head.rotation.z = THREE.MathUtils.degToRad(0.8) * Math.sin(k*Math.PI) *
+        Math.sign(anim.to - anim.from);
+    }
+    if (k >= 1) {
+      anim = null; P.moving = P.turning = false;
+      head.position.set(0,0,0); head.rotation.set(0,0,0);
+    }
+  }
+  if (tickClock && now - tickClock.t0 >= tickClock.dur) {
+    tickClock = null; tickBusy = false;
+    if (queued) { const q = queued; queued = null; dispatch(q); }
+  }
+  if (tickBusy && !tickClock) tickBusy = false;      // watchdog
+  const bk = (now - bumpT) / 150;
+  if (bk >= 0 && bk < 1) {
+    const s = Math.sin(bk*Math.PI);
+    head.position.z = 0.06 * Z.tile/3 * s;
+    head.rotation.x = THREE.MathUtils.degToRad(1.2) * s;
+  }
+}
+
+function dispatch(a) {
+  if (bootEl || menuOpen || tickBusy || !alive()) { queued = a; return; }
+  const dur = (a==='TL'||a==='TR') ? C.turnDur
+            : (a[0]==='B' && a.length===2) ? C.turnDur : stepDuration();
+
+  if (a === 'F') tryMove(0); else if (a === 'B') tryMove(2);
+  else if (a === 'L') tryMove(3); else if (a === 'R') tryMove(1);
+  else if (a === 'TL') tryTurn(-1); else if (a === 'TR') tryTurn(1);
+  else if (a === 'ATK') playerStrike();
+  else if (a === 'PRINT') { const f = facing();
+                            (f && (f.c === 'D' || f.c === 'B')) ? useDoor() : printBodies(); }
+  else if (a[0] === 'B' && a.length === 2) inhabit(+a[1]);
+  else if (a === 'HOLD') { /* bait. costs a tick like everything else. */ }
+
+  tickNo++;
+  tickClock = { t0: performance.now(), dur };
+  tickBusy = true;
+  try { enemyTurn(); }
+  catch (err) { say('AI ERROR · ' + err.message, 'bad'); console.error(err); }
+}
+
+// ── Input ──────────────────────────────────────────────────────
+const MAP = { KeyW:'F', ArrowUp:'F', KeyS:'B', ArrowDown:'B', KeyA:'L', KeyD:'R',
+              KeyQ:'TL', ArrowLeft:'TL', KeyE:'TR', ArrowRight:'TR',
+              Space:'ATK', KeyX:'HOLD', Enter:'PRINT',
+              Digit1:'B0', Digit2:'B1', Digit3:'B2', Digit4:'B3' };
+addEventListener('keydown', ev => {
+  if (bootEl) { ev.preventDefault(); endBoot(); return; }
+  if (MAP[ev.code]) { ev.preventDefault(); dispatch(MAP[ev.code]); return; }
+  if (ev.code === 'Tab')   { ev.preventDefault(); transitZone(); }
+  if (ev.code === 'Escape') { menuOpen ? closeMenu() : openMenu(); return; }
+  if (ev.code === 'KeyG')  { seed = (Math.random()*1e9)|0; rnd = mulberry32(seed);
+                             buildZone(); placeInstant(); }
+  if (ev.code === 'KeyM')  { mapMode = (mapMode + 1) % 3; }
+  if (ev.code === 'KeyH')  { debugOn = !debugOn;
+                             document.getElementById('panel').style.display =
+                               debugOn ? 'block' : 'none'; }
+});
+
+function useDoor() {
+  const f = facing();
+  if (!f || (f.c !== 'D' && f.c !== 'B')) { bump(); return; }
+  if (enemies.some(e => e.hp > 0 && e.T && e.T.boss)) {
+    say('the door will not open. something is still working.', 'warn');
+    note('SEALED'); bump(); return;
+  }
+  say(f.c === 'B' ? 'back the way you came' : 'descending', 'dim');
+  transitZone(f.c === 'B' ? -1 : 1);
+}
+
+const fade = document.getElementById('fade');
+let arriveAt = null;                       // which door we should appear beside
+
+function transitZone(dir) {
+  fade.style.opacity = '1';
+  const step = dir || 1;
+  // going down puts us at the next stratum's entry door; coming back up puts
+  // us at the previous one's descent door — the same one we left through.
+  arriveAt = step > 0 ? 'B' : 'D';
+  setTimeout(() => {
+    zoneIdx = (zoneIdx + step + ZONES.length) % ZONES.length;
+    buildZone(); placeInstant();
+    fade.style.opacity = '0';
+  }, 190);
+}
+
+// ── Tuning panel ───────────────────────────────────────────────
+const SLIDERS = [
+  ['stepBaseDur','step duration',  80, 700, 5,  v=>v+'ms'],
+  ['stepScaleExp','scale→duration', 0, 1,  .05, v=>v.toFixed(2)],
+  ['turnDur',    'turn duration',  80, 500, 5,  v=>v+'ms'],
+  ['bob',        'head bob',        0, .2, .005,v=>v.toFixed(3)],
+  ['lurch',      'step lurch',      0,  4, .1,  v=>v.toFixed(1)+'°'],
+  ['eyeHeight',  'eye height',    0.8, 3, .05,  v=>v.toFixed(2)+'m', true],
+  ['fogK',       'fog',             0, .8,.01,  v=>v.toFixed(2), true],
+  ['lightRange', 'lamp range',      1,  9, .1,  v=>v.toFixed(1)+'t',true],
+  ['lightPower', 'lamp power',      0,  8, .1,  v=>v.toFixed(1), true],
+  ['ambient',    'ambient',         0,.35,.005, v=>v.toFixed(3), true],
+  ['enemyCount', 'enemies',         0,  8,  1,  v=>String(v),    true],
+  ['windTicks',  'telegraph',       1,  5,  1,  v=>v+' tick'],
+  ['recoverTicks','punish window',  0,  5,  1,  v=>v+' tick'],
+  ['aggro',      'aggro range',     2, 14,  1,  v=>v+'t'],
+  ['sight',      'map sight',       1, 10,  1,  v=>v+'t'],
+  ['tallyTicks', 'tally count',     1,  8,  1,  v=>v+' tick'],
+  ['enemyDmg',   'their damage',    2, 60,  1,  v=>String(v)],
+  ['dmgScale',   'your damage ×',  .2,  3, .1,  v=>v.toFixed(1)+'×'],
+  ['crush',      'clamp crush',     0, 30,  1,  v=>String(v)],
+  ['renderH',    'internal res',  120,720, 8,   v=>Math.round(v)+'p'],
+  ['jitter',     'vertex snap',     0,600, 10,  v=>v<1?'off':Math.round(v)],
+  ['texelM',     'texel scale',    .4,  6, .1,  v=>v.toFixed(1)+'m', true],
+  ['props',      'wall props',      0,  1,.05,  v=>v.toFixed(2),     true],
+  ['auVol',      'audio',           0,  1,.05,  v=>v.toFixed(2)],
+  ['muVol',      'music',           0,  1,.05,  v=>v.toFixed(2)],
+];
+
+function threatLine() {
+  const tal = enemies.find(e => e.hp>0 && e.T && e.T.ai==='surveyor' && e.count>0);
+  if (tal) return '<span style="color:#c9902f">COUNTING ' + tal.count + '/' +
+                  C.tallyTicks + '</span>';
+  let best = null, bd = 99;
+  for (const e of enemies) {
+    if (e.hp <= 0 || e.state === 'dormant') continue;
+    const d = Math.abs(e.x-P.x)+Math.abs(e.y-P.y);
+    if (d < bd) { bd = d; best = e; }
+  }
+  if (!best) return '<span style="color:#4a4a46">' +
+                    (logged ? 'LOGGED' : 'clear') + '</span>';
+  const col = (best.state==='wind'||best.state==='strike') ? '#c9902f'
+            : best.state==='recover' ? '#8fbf7a' : '#8d8d88';
+  const id = best.T ? best.T.id + ' ' : '';
+  return '<span style="color:'+col+'">'+id+best.state.toUpperCase()+' '+bd+'t</span>';
+}
+const host = document.getElementById('sliders');
+for (const [key,label,min,max,step,fmt,rebuild] of SLIDERS) {
+  const l = document.createElement('label');
+  const out = document.createElement('span'); out.textContent = fmt(C[key]);
+  l.innerHTML = '<span>'+label+'</span>'; l.appendChild(out);
+  const i = document.createElement('input');
+  i.type='range'; i.min=min; i.max=max; i.step=step; i.value=C[key];
+  i.oninput = () => { C[key] = parseFloat(i.value); out.textContent = fmt(C[key]);
+    if (key === 'auVol' && AU.master) AU.master.gain.value = C.auVol;
+    if (key === 'muVol' && AU.music)  AU.music.gain.value  = C.muVol;
+    if (rebuild) { const keep={...P}; rnd = mulberry32(seed); buildZone();
+      Object.assign(P, keep); rig.position.set(P.x*Z.tile, C.eyeHeight, P.y*Z.tile); }
+    else { rig.position.y = C.eyeHeight; } };
+  host.appendChild(l); host.appendChild(i);
+}
+
+// ── External art drop-in ───────────────────────────────────────
+// Drop a PNG on the window. Filename containing "portrait" → the party strip
+// (4 cells across, LOADOUT order). Anything else → the enemy sheet, which must
+// use the same grid: 7 states across × 6 rows (front/side/back per type).
+const dropNote = document.createElement('div');
+dropNote.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);' +
+  'font:11px ui-monospace,Menlo,monospace;color:#c9902f;letter-spacing:.1em;opacity:0;' +
+  'transition:opacity .3s linear;pointer-events:none;' +
+  'background:rgba(6,7,8,.86);padding:5px 12px;border:1px solid #2a2118;';
+document.body.appendChild(dropNote);
+function note(msg) { dropNote.textContent = msg; dropNote.style.opacity = '1';
+  setTimeout(() => dropNote.style.opacity = '0', 2600); }
+
+function applyEnemySheet(img) {
+  const [c,x] = mkc(img.width, img.height);
+  x.drawImage(img, 0, 0);
+  SHEET = new THREE.CanvasTexture(c);
+  SHEET.magFilter = SHEET.minFilter = THREE.NearestFilter;
+  sheetIsCustom = true;
+  rnd = mulberry32(seed); buildZone(); placeInstant();   // respawn with new clones
+  note('ENEMY SHEET · ' + img.width + '×' + img.height);
+}
+
+function applyPortraitStrip(img) {
+  const n = LOADOUT.length, cw = Math.floor(img.width/n), ch = img.height;
+  LOADOUT.forEach((k,i) => {
+    const [c,x] = mkc(cw, ch);
+    x.drawImage(img, i*cw, 0, cw, ch, 0, 0, cw, ch);
+    PORTRAIT[k] = c;
+  });
+  portraitSize = [cw, ch];
+  resetBodies();
+  note('PORTRAITS · ' + cw + '×' + ch + ' ×' + n);
+}
+
+addEventListener('dragover', e => { e.preventDefault(); });
+addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f && (/^audio\//.test(f.type) || /\.(wav|mp3|ogg|m4a|flac)$/i.test(f.name))) {
+    const key = f.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9_]/gi, '_').toLowerCase();
+    loadSound(key, f).then(ok => note(ok ? 'SOUND · ' + key : 'DECODE FAILED'));
+    return;
+  }
+  if (!f || !/^image\//.test(f.type)) { note('NOT AN IMAGE OR SOUND'); return; }
+  const img = new Image();
+  img.onload = () => {
+    if (/portrait|avatar|party/i.test(f.name)) applyPortraitStrip(img);
+    else if (/texture|tile|wall/i.test(f.name)) applyTextureStrip(img);
+    else applyEnemySheet(img);
+    URL.revokeObjectURL(img.src);
+  };
+  img.onerror = () => note('LOAD FAILED');
+  img.src = URL.createObjectURL(f);
+});
+
+// ── Embedded art ───────────────────────────────────────────────
+// Left as placeholders here. datum_inline.py swaps them for data URIs so the
+// prototype stays a single self-contained file. Untouched = procedural sprites.
+const EMBED = { enemies: "__ENEMIES__", portraits: "__PORTRAITS__",
+                textures: "__TEXTURES__" };
+const EMBED_SFX = "__SFX__";       // JSON map of key -> data URI, or the marker
+
+function loadEmbeddedSfx() {
+  if (!EMBED_SFX || EMBED_SFX.indexOf('{') !== 0) return;
+  let map; try { map = JSON.parse(EMBED_SFX); } catch (e) { return; }
+  const b64 = (uri) => {
+    const bin = atob(uri.slice(uri.indexOf(',') + 1));
+    const a = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a.buffer;
+  };
+  const go = () => { for (const k in map) loadSound(k, b64(map[k])); };
+  if (AU.ctx) go(); else addEventListener('pointerdown', go, { once:true });
+  addEventListener('keydown', go, { once:true });
+}
+
+// Loaded tiles use MIRRORED wrapping — that makes any texture seamless no
+// matter how it was authored, and on panel surfaces the symmetry reads as
+// manufactured rather than as a mistake.
+function applyTextureStrip(img) {
+  const n = 4, w = Math.floor(img.width / n), h = img.height;
+  const slots = [['wall', M.wall], ['floor', M.floor],
+                 ['ceil', M.ceil], ['metal', M.pipe]];
+  slots.forEach(([, mat], i) => {
+    const [c, x] = mkc(w, h);
+    x.drawImage(img, i*w, 0, w, h, 0, 0, w, h);
+    const t = new THREE.CanvasTexture(c);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestMipmapNearestFilter;
+    t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping;
+    mat.map = t; mat.color.setScalar(1); mat.needsUpdate = true;
+  });
+  // greebles, props and structural plates all borrow the metal tile
+  for (const m of [M.greeble, M.metal, M.dark]) { m.map = M.pipe.map; m.needsUpdate = true; }
+  M.metal.color.setScalar(0.62); M.dark.color.setScalar(0.24);
+  rnd = mulberry32(seed); buildZone(); placeInstant();
+  note('TEXTURES · ' + w + '×' + h + ' ×' + n);
+}
+
+function loadEmbedded() {
+  const go = (src, fn) => {
+    if (!src || src.indexOf('data:') !== 0) return;
+    const i = new Image(); i.onload = () => fn(i); i.src = src;
+  };
+  go(EMBED.textures, applyTextureStrip);
+  go(EMBED.portraits, applyPortraitStrip);
+  go(EMBED.enemies, applyEnemySheet);
+  loadEmbeddedSfx();
+}
+
+// The other four of the eight. Sealed until ascension opens them —
+// the menu shows them from the first minute so the shape of the run is visible.
+const SEALED = {
+  LATTICE: { note:'raises structure. blocks a lane.' },
+  SOUNDER: { note:'reads the floor. sees through it.' },
+  CINDER:  { note:'burns a tile. leaves it burning.' },
+  CALIPER: { note:'measures. what it measures, it can undo.' },
+};
+
+function drawSealed(name) {
+  const N = 40, [c,x] = mkc(N,N);
+  px(x,0,0,N,N,'#0d0d0c');
+  for (let i=0;i<110;i++) px(x,(Math.random()*N)|0,(Math.random()*N)|0,1,1,'#121210');
+  px(x,12,12,16,20,'#1a1a17');                 // a shape under a sheet
+  px(x,14,8,12,5,'#1a1a17');
+  px(x,16,20,8,3,'#0b0b09');
+  for (let i=6;i<34;i+=6) px(x,4,i,32,1,'#151513');   // seal tape
+  px(x,0,0,N,1,'#0b0b09'); px(x,0,N-1,N,1,'#0b0b09');
+  return c;
+}
+
+let menuOpen = false, chosen = [];
+const menuEl = document.createElement('div');
+menuEl.id = 'menu';
+document.body.appendChild(menuEl);
+
+function buildMenu() {
+  const open = Object.keys(ARCH);
+  chosen = LOADOUT.slice();
+  menuEl.innerHTML =
+    '<h1>SHELL SELECTION</h1>' +
+    '<div class="sub">Four printed. Four sealed. You will occupy one at a time; ' +
+    'the rest stand where you leave them.</div>' +
+    '<div id="grid"></div>' +
+    '<div id="graft"><div class="h">MEMORY GRAFT — LOCKED</div>' +
+    '<div class="b">No patterns recovered. The archive is intact but unread. ' +
+    'Recover a fragment to graft a personality onto a shell.</div>' +
+    '<div class="code">G-000</div></div>' +
+    '<button id="start">DESCEND</button>' +
+    '<div id="menuhint">ESC reopens this</div>';
+
+  const grid = menuEl.querySelector('#grid');
+  let idx = 0;
+  const add = (name, a, locked) => {
+    idx++;
+    const d = document.createElement('div');
+    d.className = 'slot' + (locked ? ' lock' : (chosen.includes(name) ? ' pick' : ''));
+    const cv = document.createElement('canvas');
+    const src = locked ? drawSealed(name) : PORTRAIT[name];
+    cv.width = src.width; cv.height = src.height;
+    cv.getContext('2d').drawImage(src, 0, 0);
+    cv.style.height = Math.round(114 * src.height / src.width) + 'px';
+    d.appendChild(cv);
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = locked ? 'SEALED' : name; d.appendChild(nm);
+    const st = document.createElement('div'); st.className = 'st';
+    st.innerHTML = locked ? a.note
+      : 'INTEG <b>' + a.integ + '</b> · DMG <b>' + (a.dmg || '—') + '</b><br>' + a.note;
+    d.appendChild(st);
+    const cd = document.createElement('div'); cd.className = 'code';
+    cd.textContent = (locked ? 'X' : 'A') + '-' + String(11 + idx*7).padStart(3,'0');
+    d.appendChild(cd);
+    if (!locked) d.onclick = () => {
+      const i = chosen.indexOf(name);
+      if (i >= 0) { if (chosen.length <= 1) return; chosen.splice(i,1); }
+      else chosen.push(name);
+      d.classList.toggle('pick', chosen.includes(name));
+      menuEl.querySelector('#start').disabled = chosen.length !== 4;
+      SFX.swap();
+    };
+    grid.appendChild(d);
+  };
+  open.forEach(n => add(n, ARCH[n], false));
+  Object.keys(SEALED).forEach(n => add(n, SEALED[n], true));
+
+  const btn = menuEl.querySelector('#start');
+  btn.disabled = chosen.length !== 4;
+  btn.onclick = () => {
+    auInit();
+    LOADOUT.length = 0; chosen.forEach(n => LOADOUT.push(n));
+    closeMenu();
+    resetBodies();
+    SFX.print();
+  };
+}
+
+function openMenu()  { menuOpen = true;  menuEl.style.display = 'flex'; buildMenu(); }
+function closeMenu() { menuOpen = false; menuEl.style.display = 'none'; }
+
+// ── Prologue ───────────────────────────────────────────────────
+// An inventory, not a monologue. The clerical register the original will use
+// later starts here — because you and it are the same thing, at the start.
+// Timing does the work: the pause before each "no response" is the content.
+const BOOT = [
+  [ 300, '<i>power</i> nominal'],
+  [ 800, '<i>frame</i> intact'],
+  [ 800, '<i>task</i> unassigned'],
+  [1000, '<i>operator</i> <span class="d">no response</span>'],
+  [1200, '<i>last contact</i> <b>—</b>'],
+  [2600, ''],
+  [ 200, '<span class="q">query · external perimeter</span>'],
+  [1900, '+ <span class="d">no response</span>'],
+  [ 900, '<span class="q">query · structure boundary</span>'],
+  [2100, '+ <span class="d">no response</span>'],
+  [ 900, '<span class="q">query · population census</span>'],
+  [2600, '+ <span class="big">1 104 882 617 443</span>'],
+  [1400, '<i></i><span class="d">in storage</span>'],
+  [3200, ''],
+  [ 300, '<i>observation</i> <span class="d">unavailable</span>'],
+  [1100, '<i>intervention</i> <b>available</b>'],
+  [2400, ''],
+  [ 400, '<i>printing</i>'],
+  [1600, null],                                   // null = hand off to the menu
+];
+
+let bootEl = null, bootTimer = null, bootIdx = 0;
+
+// teletype: a short burst of hard square blips, not one soft click
+function typeSfx(n) {
+  if (!AU.ctx) return;
+  for (let i = 0; i < n; i++) setTimeout(() => {
+    tn(0.018, 1500 + Math.random()*1400, 900, 0.045, 'square', 0.15);
+    nz(0.012, 5200, 3000, 9, 0.030, 'bandpass', 0.15);
+  }, i * 26);
+}
+
+function runBoot() {
+  bootEl = document.createElement('div');
+  bootEl.id = 'boot';
+  bootEl.innerHTML = '<div id="bootbox"></div>' +
+                     '<div id="bootskip">ANY KEY TO SKIP</div>';
+  document.body.appendChild(bootEl);
+  const box = bootEl.querySelector('#bootbox');
+  bootIdx = 0;
+
+  const step = () => {
+    if (bootIdx >= BOOT.length) return endBoot();
+    const [wait, html] = BOOT[bootIdx++];
+    bootTimer = setTimeout(() => {
+      if (html === null) return endBoot();
+      if (html === '') { box.appendChild(document.createElement('br')); }
+      else if (html.indexOf('+ ') === 0) {        // completes the line above
+        const last = box.lastElementChild;
+        if (last) { const s = document.createElement('span');
+          s.className = 'ln'; s.innerHTML = ' ' + html.slice(2); last.appendChild(s); }
+        typeSfx(6);
+      } else {
+        const d = document.createElement('div');
+        d.className = 'ln'; d.innerHTML = html; box.appendChild(d);
+        typeSfx(Math.min(14, 4 + (d.textContent||'').length / 4));
+      }
+      step();
+    }, wait);
+  };
+  step();
+}
+
+function endBoot() {
+  clearTimeout(bootTimer);
+  if (bootEl) { bootEl.remove(); bootEl = null; }
+  openMenu();
+}
+
+// ── Boss readout ───────────────────────────────────────────────
+// One bar per half, so the split reads as a structural change and not as a
+// health reset.
+const bossEl = document.getElementById('boss');
+let bossShown = '';
+
+function drawBoss() {
+  const b = enemies.filter(e => e.T && e.T.boss && (e.hp > 0 || e.state !== 'dead'));
+  const live = b.filter(e => e.hp > 0);
+  const engaged = live.some(e => e.state !== 'dormant');
+  if (!live.length || !engaged) { bossEl.style.display = 'none'; bossShown = ''; return; }
+
+  const key = live.map(e => e.T.id).join('|');
+  if (key !== bossShown) {
+    bossShown = key;
+    const title = live.length === 1 && live[0].T.phase1 ? 'THE CADAVER'
+                : live.length === 1 ? live[0].T.id + ' — WHOLE ORDER'
+                : 'THE CADAVER · SEPARATED';
+    bossEl.innerHTML = '<div class="bn">' + title + '</div>' +
+      live.map(e => '<div class="row" data-id="'+e.T.id+'">' +
+        '<span class="lbl">'+e.T.id+'</span>' +
+        '<div class="seg"><i></i></div></div>').join('');
+    bossEl.style.display = 'block';
+  }
+  live.forEach((e, i) => {
+    const row = bossEl.children[i + 1]; if (!row) return;
+    row.querySelector('i').style.width = Math.max(0, e.hp / e.T.hp * 100) + '%';
+  });
+}
+
+// ── Action log ─────────────────────────────────────────────────
+// Bottom right, newest at the bottom. Older lines fade rather than scroll,
+// so the eye can ignore it entirely during a fight.
+const logEl = document.createElement('div');
+logEl.id = 'log'; document.body.appendChild(logEl);
+const LOG_MAX = 7;
+
+function say(html, cls) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.innerHTML = html;
+  logEl.appendChild(d);
+  while (logEl.children.length > LOG_MAX) logEl.removeChild(logEl.firstChild);
+  const n = logEl.children.length;
+  for (let i = 0; i < n; i++) {
+    logEl.children[i].style.opacity = String(0.28 + 0.72 * ((i + 1) / n));
+  }
+}
+
+// ── Minimap ────────────────────────────────────────────────────
+// mapMode: 0 off, 1 layout only, 2 layout + everything (debug reveal)
+// mapMode 0 = drawn as you go, 1 = whole layout, 2 = layout + everything (debug)
+let mapMode = 0, debugOn = false;
+let seen = new Set(), visible = new Set();
+
+// A stratum remembers. Come back through a door and the machines you broke are
+// still broken, and the corridors you walked are still on the map.
+const ZSTATE = {};
+function zstate() {
+  const id = Z ? Z.id : '?';
+  return ZSTATE[id] || (ZSTATE[id] = { killed: new Set(), seen: new Set(),
+                                       spent: new Set() });
+}
+
+function updateSeen() {
+  visible = new Set();
+  if (!grid.length) return;
+  const R = C.sight, FAR = C.sight * 3;
+  const H = grid.length, W = grid[0].length;
+  for (let y = Math.max(0,P.y-FAR); y <= Math.min(H-1,P.y+FAR); y++)
+    for (let x = Math.max(0,P.x-FAR); x <= Math.min(W-1,P.x+FAR); x++) {
+      const cheb = Math.max(Math.abs(x-P.x), Math.abs(y-P.y));
+      // close by you simply know; further out you must have a clear line
+      if (cheb <= R || los(P.x, P.y, x, y)) {
+        const k = x + ',' + y;
+        visible.add(k); seen.add(k);
+      }
+    }
+}
+const mini = document.getElementById('mini'), mctx = mini.getContext('2d');
+const STATE_COL = { dormant:'#55554e', stalk:'#cfcabe', wind:'#c9902f',
+                    strike:'#e8622f', recover:'#8fbf7a', dead:'#332222' };
+
+function drawMini() {
+  const S = 248, H = grid.length, W = grid[0].length;
+  const s = Math.max(3, Math.floor(Math.min((S-16)/W, (S-16)/H)));
+  const ox = (S - W*s)/2, oy = (S - H*s)/2;
+  mctx.clearRect(0,0,S,S);
+
+  const known = (x,y) => mapMode > 0 || seen.has(x + ',' + y);
+  const lit   = (x,y) => mapMode > 0 || visible.has(x + ',' + y);
+
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    const c = grid[y][x];
+    if (!known(x,y)) continue;
+    const near = lit(x,y);
+    if (c === '#') mctx.fillStyle = near ? '#2e2e26' : '#1c1c17';
+    else if (WALK.has(c)) mctx.fillStyle = near ? '#4d4d45' : '#2c2c27';
+    else continue;
+    mctx.fillRect(ox+x*s, oy+y*s, s, s);
+  }
+
+  // printers and doors, remembered once seen
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    const c = grid[y][x];
+    if (c !== 'P' && c !== 'D' && c !== 'T') continue;
+    if (!known(x,y)) continue;
+    const dead = (c === 'P' || c === 'T') && zstate().spent.has(x + ',' + y);
+    mctx.fillStyle = dead ? '#3a3630' : (lit(x,y) ? '#c9902f' : '#6a4d1a');
+    if (c === 'D') mctx.fillRect(ox+x*s+s*0.12, oy+y*s+s*0.30, s*0.76, s*0.40);
+    else           mctx.fillRect(ox+x*s+s*0.24, oy+y*s+s*0.24, s*0.52, s*0.52);
+  }
+
+  // anything you can currently see gets drawn even outside reveal mode
+  if (mapMode < 2) {
+    for (const e of enemies) {
+      if (e.hp <= 0 || !visible.has(e.x + ',' + e.y)) continue;
+      const role = e.T ? e.T.ai : 'fighter';
+      mctx.fillStyle = role === 'hauler'   ? '#6f7f9a'
+                     : role === 'surveyor' ? (e.count ? '#c9902f' : '#7a8f6a')
+                     : (e.T && e.T.boss)   ? '#c0553a' : '#cfcabe';
+      mctx.beginPath();
+      mctx.arc(ox+e.x*s+s/2, oy+e.y*s+s/2, s*0.32, 0, 6.2832); mctx.fill();
+    }
+  }
+
+  if (mapMode === 2) {
+    for (const e of enemies) {
+      const cx = ox + e.x*s + s/2, cy = oy + e.y*s + s/2;
+      // sightline when it can actually see you
+      if (e.hp > 0 && e.state !== 'dormant' && los(e.x, e.y, P.x, P.y)) {
+        mctx.strokeStyle = 'rgba(201,144,47,.22)'; mctx.lineWidth = 1;
+        mctx.beginPath(); mctx.moveTo(cx, cy);
+        mctx.lineTo(ox + P.x*s + s/2, oy + P.y*s + s/2); mctx.stroke();
+      }
+      const role = e.T ? e.T.ai : 'fighter';
+      mctx.fillStyle = role === 'hauler'   ? '#6f7f9a'
+                     : role === 'surveyor' ? (e.count ? '#c9902f' : '#7a8f6a')
+                     : (STATE_COL[e.state] || '#888');
+      mctx.beginPath(); mctx.arc(cx, cy, s*0.34, 0, 6.2832); mctx.fill();
+      // facing tick — the tile it will strike
+      const d = DIR[e.face];
+      mctx.strokeStyle = mctx.fillStyle; mctx.lineWidth = 1.6;
+      mctx.beginPath(); mctx.moveTo(cx, cy);
+      mctx.lineTo(cx + d[0]*s*0.85, cy + d[1]*s*0.85); mctx.stroke();
+      // integrity remaining
+      if (e.hp > 0) {
+        mctx.fillStyle = '#0a0a09';
+        mctx.fillRect(ox+e.x*s, oy+e.y*s+s-2, s, 2);
+        mctx.fillStyle = '#8fbf7a';
+        mctx.fillRect(ox+e.x*s, oy+e.y*s+s-2, s*Math.max(0,e.hp/(e.T?e.T.hp:C.enemyHP)), 2);
+      }
+    }
+  }
+
+  // player + facing
+  const px = ox + P.x*s + s/2, py = oy + P.y*s + s/2, pd = DIR[P.face];
+  mctx.fillStyle = '#f0ece2';
+  mctx.beginPath(); mctx.arc(px, py, s*0.3, 0, 6.2832); mctx.fill();
+  mctx.strokeStyle = '#f0ece2'; mctx.lineWidth = 1.6;
+  mctx.beginPath(); mctx.moveTo(px, py);
+  mctx.lineTo(px + pd[0]*s*0.95, py + pd[1]*s*0.95); mctx.stroke();
+
+  if (mapMode > 0) {
+    mctx.font = '9px ui-monospace, Menlo, monospace';
+    mctx.fillStyle = '#5c5c58';
+    mctx.fillText(mapMode === 1 ? 'LAYOUT'
+                : 'REVEAL  ' + enemies.filter(e=>e.hp>0).length + ' active', 6, S-6);
+  }
+}
+
+// ── HUD ────────────────────────────────────────────────────────
+const hud = document.getElementById('hud');
+const FACE = ['N','E','S','W'];
+let frames=0, fpsT=performance.now(), fps=0;
+
+// ── Loop ───────────────────────────────────────────────────────
+buildZone(); placeInstant();
+loadEmbedded();
+runBoot();
+
+let lastT = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.05, (now - lastT)/1000); lastT = now;
+  updateAnim(now);
+  paintPortraits(now);
+  updateSeen();
+  updateEnemies(now);
+  updateParticles(dt);
+  for (const f of fans) f.hub.rotation.z += f.spd * dt;
+  drawBoss();
+  if (AU.ctx) {
+    const bosses = enemies.filter(e => e.hp > 0 && e.T && e.T.boss);
+    const awake = bosses.some(e => !e.asleep);
+    workshopOn = bosses.some(e => e.asleep);
+    musicSet(awake ? 'combat' : workshopOn ? 'approach' : 'ambient');
+  }
+  rig.position.y += (eyeY() - rig.position.y) * 0.16;   // shells sit at different heights
+  // no camera roll on damage — the hit reads on the portrait instead
+
+  if (Math.abs(RT.height - C.renderH) > 4) sizeRT();
+  renderer.setRenderTarget(RT);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  renderer.render(blitScene, blitCam);
+
+  drawSwing(now);
+  if (impLight) {
+    const ik = (now - impT) / 190;
+    impLight.intensity = ik < 1 ? (impLight.userData.peak || 5) * Math.pow(1 - ik, 2) : 0;
+  }
+  drawMini();
+  frames++;
+  if (now - fpsT > 500) { fps = Math.round(frames*1000/(now-fpsT)); frames=0; fpsT=now; }
+  hud.innerHTML =
+    '<span style="color:#2e3136;font-size:9px;letter-spacing:.22em">' +
+      'LVL-' + String(zoneIdx+1).padStart(2,'0') + '</span><br>' +
+    '<b>'+Z.name+'</b> &nbsp; <span class="amber">'+material+'</span> stock' +
+    (() => { const f = facing(); if (!f) return '';
+   return f.c === 'D' ? ' &nbsp;<span class="amber">[ENTER] descend</span>'
+        : f.c === 'B' ? ' &nbsp;<span class="amber">[ENTER] go back</span>'
+                      : ' &nbsp;<span class="amber">[ENTER] print</span>'; })() +
+    '<br>' + threatLine() +
+    (debugOn ? '<br><span style="color:#4a4a46">' +
+      'tile '+Z.tile+'m · wall '+(Z.wallH||Math.round(Z.tile*C.wallHMul))+'m · ' +
+      'step '+Math.round(stepDuration())+'ms<br>' +
+      'cell '+P.x+','+P.y+' · facing '+FACE[P.face]+' · tick '+tickNo+' · '+fps+' fps</span>'
+    : '');
+}
+requestAnimationFrame(tick);
+
+addEventListener('error', ev => {
+  if (typeof say === 'function') say('ERROR · ' + ev.message, 'bad');
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  sizeRT(); sizeFX();
+});
+</script>
+</body>
+</html>

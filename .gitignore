@@ -1,0 +1,14 @@
+# generated: rebuilt from src/ by the scripts in build/
+assets/
+dist/
+
+# large source renders live here; keep them, they are the originals
+# (comment the next line out if the repo gets too heavy for your remote)
+# src/
+
+__pycache__/
+*.pyc
+_pv_*.png
+_ct_*.png
+_dg_*.png
+_trash*/
