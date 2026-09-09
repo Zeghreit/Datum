@@ -135,6 +135,75 @@ def do_trim(key, headroom, q):
              os.path.getsize(out) / 1024))
 
 
+# How long each cue is allowed to be. A one-shot that outlasts the turn it
+# belongs to smears into the next one, and the brief's timings are what the
+# engine's own synthesis was written against.
+TARGET = {
+    "step": 0.35, "turn": 0.25, "bump": 0.35, "swap": 0.25, "print": 1.2,
+    "cut": 0.45, "slam": 0.60, "thrust": 0.25, "pulse": 0.50, "clank": 0.35,
+    "crit": 0.60, "hurt": 0.55, "crush": 0.70, "kill": 1.40, "seam": 0.70,
+    "dray": 0.80, "tally": 0.60, "seal": 0.90, "brk": 0.80, "roar": 3.00,
+    "hammer": 1.20, "saw": 2.00,
+}
+LOOPS = ("amb_drone", "amb_wind")
+RAW = os.path.join(SFX, "_raw")
+
+
+def raw_for(key, sid):
+    d = os.path.join(RAW, key)
+    if not os.path.isdir(d):
+        return None
+    for fn in sorted(os.listdir(d)):
+        if fn.rsplit("__", 1)[-1].rsplit(".", 1)[0] == sid:
+            return os.path.join(d, fn)
+    return None
+
+
+def do_pick(key, sid, start, q):
+    """Take one audition candidate and make it the key, at the right length."""
+    src = raw_for(key, sid)
+    if not src:
+        print("  %-10s no candidate %s in _raw" % (key, sid))
+        return
+    dur, peak = probe(src)
+    gain = 0.0 if peak is None else (-1.0 - peak)
+    out = os.path.join(SFX, key + ".ogg")
+
+    if key in LOOPS:
+        x = min(2.5, dur / 3.0)
+        e = dur - x
+        chain = ("[0:a]{h},asplit=3[a][b][c];"
+                 "[a]atrim=0:{x:.3f},asetpts=PTS-STARTPTS,"
+                 "afade=t=out:st=0:d={x:.3f}:curve=qsin[head];"
+                 "[b]atrim={e:.3f}:{d:.3f},asetpts=PTS-STARTPTS,"
+                 "afade=t=in:st=0:d={x:.3f}:curve=qsin[tail];"
+                 "[head][tail]amix=inputs=2:normalize=0[join];"
+                 "[c]atrim={x:.3f}:{e:.3f},asetpts=PTS-STARTPTS[body];"
+                 "[join][body]concat=n=2:v=0:a=1,"
+                 "loudnorm=I=-22:TP=-2:LRA=11,{h}[out]").format(h=HEAD, x=x, e=e, d=dur)
+        note = "loop %.1fs" % (dur - x)
+    else:
+        want = TARGET.get(key, 1.0)
+        fade = min(0.06, want / 4)
+        chain = ("[0:a]{h},atrim=start={s:.3f},asetpts=PTS-STARTPTS,"
+                 "silenceremove=start_periods=1:start_silence=0:start_threshold=-55dB,"
+                 "atrim=0:{w:.3f},asetpts=PTS-STARTPTS,"
+                 "afade=t=out:st={fo:.3f}:d={f:.3f}:curve=qsin,"
+                 "volume={g:.2f}dB,{h}[out]"
+                 ).format(h=HEAD, s=start, w=want, fo=max(0.0, want - fade),
+                          f=fade, g=gain)
+        note = "%.2fs" % want
+
+    tmp = out + ".tmp.ogg"
+    encode(src, tmp, chain, q)
+    if os.path.exists(out):
+        os.remove(out)
+    shutil.move(tmp, out)
+    print("  %-10s <- %-9s %s, %5.0f kb   %s"
+          % (key, sid, note, os.path.getsize(out) / 1024,
+             os.path.basename(src)[:40]))
+
+
 def do_info():
     print("  %-18s %8s %8s %8s" % ("key", "sec", "peak dB", "kb"))
     for fn in sorted(os.listdir(SFX)):
@@ -164,11 +233,26 @@ def main():
     s.add_argument("--peak", type=float, default=-1.0, help="target peak dBFS")
     s.add_argument("-q", type=int, default=4, help="vorbis quality (0..10)")
 
+    s = sub.add_parser("pick", help='apply audition picks: "step=815039 clank=842171"')
+    s.add_argument("picks", nargs="+")
+    s.add_argument("--start", type=float, default=0.0,
+                   help="skip this many seconds into the source first")
+    s.add_argument("-q", type=int, default=4)
+
     sub.add_parser("info", help="what is in sfx/ right now")
 
     a = ap.parse_args()
     if a.cmd == "info":
         return do_info()
+    if a.cmd == "pick":
+        print("ffmpeg %s" % os.path.basename(FF))
+        for token in " ".join(a.picks).replace(",", " ").split():
+            if "=" not in token:
+                print("  skipping %r — expected key=id" % token)
+                continue
+            key, sid = token.split("=", 1)
+            do_pick(key.strip(), sid.strip(), a.start, a.q)
+        return
     print("ffmpeg %s" % os.path.basename(FF))
     for k in a.keys:
         if a.cmd == "loop":
