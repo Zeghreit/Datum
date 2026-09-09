@@ -2219,6 +2219,11 @@ function auInit() {
 
   startAmbient();
   startMusic();
+  // Samples may have finished decoding before there were any buses to hang
+  // them on — that left every supplied loop silent while the generative layer
+  // played underneath it. Wiring again here is free: startLoop ignores a key
+  // that is already running.
+  rewireLoops();
 }
 addEventListener('pointerdown', auInit, { once:true });
 addEventListener('keydown', auInit, { once:true });
@@ -2704,6 +2709,7 @@ function startMusic() {
 function musicSet(mode) {
   if (!AU.ctx || !AU.amb || AU.mode === mode) return;
   AU.mode = mode;
+  rewireLoops();          // idempotent, and the only place that runs every mode change
   const fast = mode === 'combat' || mode === 'boss';
   const t = AU.ctx.currentTime, dur = fast ? 0.9 : 2.6;
   const set = (node, v) => {
@@ -3253,8 +3259,11 @@ function loadEmbeddedSfx() {
     for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
     return a.buffer;
   };
-  const go = () => { for (const k in map) loadSound(k, b64(map[k])); };
-  if (AU.ctx) go(); else addEventListener('pointerdown', go, { once:true });
+  let done = false;
+  const go = () => { if (done) return; done = true;
+                     for (const k in map) loadSound(k, b64(map[k])); };
+  if (AU.ctx) { go(); return; }
+  addEventListener('pointerdown', go, { once:true });
   addEventListener('keydown', go, { once:true });
 }
 
@@ -3651,13 +3660,10 @@ function tick(now) {
     const bosses = enemies.filter(e => e.hp > 0 && e.T && e.T.boss);
     const awake = bosses.some(e => !e.asleep);
     workshopOn = bosses.some(e => e.asleep);
-    // Ordinary machines that have noticed you get the trance; the Cadaver and
-    // its two halves get their own theme. One is a fight with something that is
-    // doing its job, the other is the structure itself waking up.
-    const fight = enemies.some(e => e.hp > 0 && !(e.T && e.T.boss) &&
-      (e.alerted || (Math.abs(e.x - P.x) + Math.abs(e.y - P.y) <= C.aggro &&
-                     los(e.x, e.y, P.x, P.y))));
-    musicSet(awake ? 'boss' : fight ? 'combat' : workshopOn ? 'approach' : 'ambient');
+    // Only the Cadaver and its two halves change the music. Skirmishes in the
+    // corridors stay under the ambient bed — the sector is quiet by default and
+    // the one thing that breaks the quiet should be the thing that matters.
+    musicSet(awake ? 'boss' : workshopOn ? 'approach' : 'ambient');
   }
   rig.position.y += (eyeY() - rig.position.y) * 0.16;   // shells sit at different heights
   // no camera roll on damage — the hit reads on the portrait instead
