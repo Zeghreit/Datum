@@ -142,7 +142,9 @@ TARGET = {
     "step": 0.35, "turn": 0.25, "bump": 0.35, "swap": 0.25, "print": 1.2,
     "cut": 0.45, "slam": 0.60, "thrust": 0.25, "pulse": 0.50, "clank": 0.35,
     "crit": 0.60, "hurt": 0.55, "crush": 0.70, "kill": 1.40, "seam": 0.70,
-    "dray": 0.80, "tally": 0.60, "seal": 0.90, "brk": 0.80, "roar": 3.00,
+    # roar is the one cue that fires on an event rather than on a turn, so it
+    # cannot smear into anything — it gets whatever length the source has
+    "dray": 0.80, "tally": 0.60, "seal": 0.90, "brk": 0.80, "roar": 5.00,
     "hammer": 1.20, "saw": 2.00,
 }
 LOOPS = ("amb_drone", "amb_wind")
