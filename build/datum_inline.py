@@ -1,4 +1,4 @@
-import base64, json, os, sys
+import base64, hashlib, json, os, sys, time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC  = os.path.join(HERE, 'datum-prototype.html')
@@ -18,6 +18,14 @@ if not os.path.exists(SRC):
     sys.exit('Put datum-prototype.html next to this script first: ' + SRC)
 
 html = open(SRC, encoding='utf-8').read()
+
+# Stamp the build so a stale tab announces itself in its own title.
+stamp = '%s %s' % (time.strftime('%d.%m %H:%M'),
+                   hashlib.sha1(html.encode('utf-8')).hexdigest()[:7])
+if "const BUILD = 'dev';" not in html:
+    sys.exit('BUILD marker missing from the source — put it back')
+html = html.replace("const BUILD = 'dev';", "const BUILD = '%s';" % stamp)
+print('build   %s' % stamp)
 
 for marker, fn in ASSETS.items():
     path = os.path.join(HERE, 'assets', fn)

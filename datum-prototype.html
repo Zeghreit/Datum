@@ -3284,6 +3284,12 @@ const EMBED = { enemies: "__ENEMIES__", portraits: "__PORTRAITS__",
                 textures: "__TEXTURES__" };
 const EMBED_SFX = "__SFX__";       // JSON map of key -> data URI, or the marker
 
+// Stamped by datum_inline.py at bake time. It is in the tab title so a stale
+// page is obvious at a glance — twice now an hour went into a fix that was
+// already on disk and simply not being loaded.
+const BUILD = 'dev';
+document.title = 'DATUM · ' + BUILD;
+
 function loadEmbeddedSfx() {
   if (!EMBED_SFX || EMBED_SFX.indexOf('{') !== 0) return;
   let map; try { map = JSON.parse(EMBED_SFX); } catch (e) { return; }
