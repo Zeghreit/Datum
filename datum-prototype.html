@@ -3509,9 +3509,14 @@ function applyEnemySheet(img) {
   note('ENEMY SHEET · ' + img.width + '×' + img.height);
 }
 
+// The order the art pipeline writes its strips in — build/datum_chars.py, ORDER.
+// It is NOT the loadout: pick the shells in a different order in the menu and
+// cutting by loadout hands every face to the wrong archetype.
+const STRIP_ORDER = ['BALLAST', 'BREACH', 'VECTOR', 'CONDUIT'];
+
 function applyPortraitStrip(img) {
-  const n = LOADOUT.length, cw = Math.floor(img.width/n), ch = img.height;
-  LOADOUT.forEach((k,i) => {
+  const n = STRIP_ORDER.length, cw = Math.floor(img.width/n), ch = img.height;
+  STRIP_ORDER.forEach((k,i) => {
     const [c,x] = mkc(cw, ch);
     x.drawImage(img, i*cw, 0, cw, ch, 0, 0, cw, ch);
     PORTRAIT[k] = c;
@@ -3521,13 +3526,11 @@ function applyPortraitStrip(img) {
   note('PORTRAITS · ' + cw + '×' + ch + ' ×' + n);
 }
 
-// Full-body renders for the status screen. Same strip layout as the portraits,
-// cut in the order of the roster rather than the loadout, so a shell that is
-// not printed still has a page.
+// Full-body renders for the status screen. Same strip and the same order, so a
+// shell you did not print still has a page.
 function applyPartyFull(img) {
-  const roster = Object.keys(ARCH);
-  const n = roster.length, cw = Math.floor(img.width / n), ch = img.height;
-  roster.forEach((k, i) => {
+  const n = STRIP_ORDER.length, cw = Math.floor(img.width / n), ch = img.height;
+  STRIP_ORDER.forEach((k, i) => {
     const [c, x] = mkc(cw, ch);
     x.drawImage(img, i*cw, 0, cw, ch, 0, 0, cw, ch);
     FULL[k] = c;
