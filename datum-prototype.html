@@ -331,11 +331,11 @@ const C = {
   windTicks:    2,      // telegraph length. YOUR window to answer.
   recoverTicks: 2,      // punish window after it swings
   enemyHP:      100,
-  enemyDmg:     26,
+  enemyDmg:     52,     // doubled with the group attack: four shells swing every tick now
   tallyTicks:   3,      // ticks a TALLY needs to finish counting you
   sight:        3,      // tiles you map around yourself without line of sight
   dmgScale:     1.0,
-  crush:        9,      // damage a clamped shell takes every tick it stays clamped
+  crush:        18,     // damage a clamped shell takes every tick it stays clamped
 
   // PS1 pipeline
   renderH:      272,    // internal vertical resolution, upscaled with no filtering
@@ -2843,10 +2843,10 @@ let anim = null, queued = null;
 // The other three are furniture that happens to be shaped like you.
 // Four of the eight archetypes, named as facility functions.
 const ARCH = {
-  BREACH:   { integ:60,  dmg:30, punish:2.2, eye:1.06, fx:'cut',    note:'cuts. thin.' },
-  BALLAST:  { integ:150, dmg:10, punish:1.6, eye:0.86, fx:'slam',   note:'absorbs. slow.' },
-  VECTOR:   { integ:80,  dmg:16, punish:4.5, eye:1.00, fx:'thrust', note:'waits for the opening.' },
-  CONDUIT:  { integ:70,  dmg:4,  punish:1,   eye:0.96, fx:'pulse', repair:34,
+  BREACH:   { integ:60,  dmg:15, punish:2.2, eye:1.06, fx:'cut',    note:'cuts. thin.' },
+  BALLAST:  { integ:150, dmg:5,  punish:1.6, eye:0.86, fx:'slam',   note:'absorbs. slow.' },
+  VECTOR:   { integ:80,  dmg:8,  punish:4.5, eye:1.00, fx:'thrust', note:'waits for the opening.' },
+  CONDUIT:  { integ:70,  dmg:2,  punish:1,   eye:0.96, fx:'pulse', repair:34,
               note:'mends. barely strikes.' },
 };
 
