@@ -22,9 +22,9 @@ drawCallouts callout screenOf drawBoss drawVitals paintPortraits resetBodies
 damageShell inhabit printBodies playerStrike useDoor transitZone arrivalSpot
 faceOpen dispatch tryMove tryTurn drawMini updateSeen runBoot openMenu
 buildMenu auInit startAmbient startMusic musicSet clank thud robo tellFor
-loadSound say note zstate facing""".split()
+loadSound say note zstate facing buildStatus openStatus""".split()
 
-MARKERS = ['__ENEMIES__', '__PORTRAITS__', '__TEXTURES__', '__SFX__']
+MARKERS = ['__ENEMIES__', '__PORTRAITS__', '__TEXTURES__', '__FULL__', '__SFX__']
 
 
 def check():

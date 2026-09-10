@@ -279,6 +279,58 @@
   #start:hover:not(:disabled) { background:rgba(201,144,47,.10); }
   #start:disabled { border-color:#3a3d42; color:#5a5e65; cursor:not-allowed; }
   #menuhint { margin-top:13px; font-size:12px; color:#4c5057; letter-spacing:.12em; }
+
+  /* ── shell status ──────────────────────────────────────────── */
+  /* One shell to a screen. The body is the page, the numbers are a margin
+     note, and six of the eight sockets are empty on purpose. */
+  #status { position:fixed; inset:0; background:rgba(4,5,6,.96); z-index:55;
+    display:none; align-items:center; justify-content:center; gap:34px;
+    font-family: ui-monospace, Menlo, monospace; color:var(--mid); }
+  #status .body { position:relative; width:330px; height:620px; flex:none;
+    border:1px solid var(--line2); background:rgba(8,9,10,.9);
+    clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px),
+                       calc(100% - 16px) 100%, 0 100%, 0 16px); }
+  #status .body canvas { position:absolute; inset:8px; width:calc(100% - 16px);
+    height:calc(100% - 16px); object-fit:contain; image-rendering:pixelated; }
+  #status .body .tick { position:absolute; width:15px; height:15px;
+    border:1px solid var(--amb); }
+  #status .body .t1 { left:6px; top:6px; border-right:0; border-bottom:0; }
+  #status .body .t2 { right:6px; bottom:6px; border-left:0; border-top:0; }
+  #status .col { width:470px; }
+  #status .nav { display:flex; align-items:baseline; gap:14px; margin-bottom:2px; }
+  #status .nav .arw { color:var(--dim); font-size:13px; letter-spacing:.1em; }
+  #status h1 { font-size:22px; font-weight:500; letter-spacing:.34em; color:var(--amb);
+    margin:0; }
+  #status .role { font-size:13px; color:var(--dim); letter-spacing:.12em;
+    margin:6px 0 16px; }
+  #status .par { display:grid; grid-template-columns:repeat(4,1fr); gap:9px;
+    margin-bottom:18px; }
+  #status .par div { border:1px solid var(--line2); background:rgba(8,9,10,.9);
+    padding:7px 9px;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px),
+                       calc(100% - 8px) 100%, 0 100%, 0 8px); }
+  #status .par span { display:block; font-size:11px; letter-spacing:.14em;
+    color:#4c5057; }
+  #status .par b { font-size:17px; font-weight:500; color:var(--hi);
+    letter-spacing:.04em; }
+  #status .hd { font-size:12px; letter-spacing:.24em; color:var(--dim);
+    border-bottom:1px solid var(--line2); padding-bottom:5px; margin-bottom:9px;
+    display:flex; justify-content:space-between; }
+  #status .sock { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #status .sock > div { position:relative; border:1px solid var(--line2);
+    background:rgba(8,9,10,.9); padding:8px 10px 9px; min-height:66px;
+    clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px),
+                       calc(100% - 9px) 100%, 0 100%, 0 9px); }
+  #status .sock .k { font-size:11px; letter-spacing:.16em; color:var(--amb); }
+  #status .sock .n { font-size:13px; letter-spacing:.12em; color:var(--hi);
+    margin:3px 0 4px; }
+  #status .sock .d { font-size:12px; color:var(--dim); line-height:1.55; }
+  #status .sock .cd { position:absolute; right:9px; top:8px; font-size:11px;
+    color:#4c5057; letter-spacing:.1em; }
+  #status .sock .void { opacity:.34; }
+  #status .sock .void .n { color:var(--dim); }
+  #status .foot { margin-top:15px; font-size:12px; color:#4c5057;
+    letter-spacing:.12em; }
 </style>
 </head>
 <body>
@@ -291,7 +343,7 @@
 <div id="keys">
   <b>WASD</b> step &nbsp; <b>QE</b> turn, free &nbsp; <b>SPACE</b> all strike<br>
   <b>1-4</b> select, free &nbsp; <b>F R</b> abilities &nbsp; <b>X</b> hold<br>
-  <b>ENTER</b> print &nbsp; <b>ESC</b> shells &nbsp; <b>M</b> map<br>
+  <b>ENTER</b> print &nbsp; <b>C</b> status &nbsp; <b>ESC</b> shells &nbsp; <b>M</b> map<br>
   <span style="color:#33332f">G reseed · TAB zone · H debug · drop a PNG</span>
 </div>
 <div id="boss"></div>
@@ -2855,12 +2907,12 @@ const ARCH = {
 // to look down at the party, and it is why selection costs nothing.
 const SKILLS = {
   BALLAST: [
-    { id:'BULWARK', cd:5, txt:'shield all 2t', use: b => {
+    { id:'BULWARK', cd:5, desc:'Every shell braced for two ticks. What lands drops to a third — plating, not immunity.', use: b => {
         for (const v of bodies) if (v.hp > 0) v.shield = 2;
         SFX.slam(); swingFX('slam', true);
         say('<b>'+b.k+'</b> braces the line — plating holds 2 ticks', 'good');
         return true; } },
-    { id:'PIN', cd:5, txt:'stun one 2t', use: b => {
+    { id:'PIN', cd:5, desc:'Seizes the machine in front for two ticks. It does not swing and it does not step.', use: b => {
         const e = frontEnemy();
         if (!e) { say('nothing in front to pin', 'dim'); return false; }
         e.stun = 2; e.state = 'recover'; e.timer = Math.max(e.timer||0, 2);
@@ -2869,14 +2921,14 @@ const SKILLS = {
         return true; } },
   ],
   BREACH: [
-    { id:'SUNDER', cd:6, txt:'heavy, one', use: b => {
+    { id:'SUNDER', cd:6, desc:'Two and a half swings into one target. Opens armour that the whole line only scratches.', use: b => {
         const e = frontEnemy();
         if (!e) { say('nothing in front to open', 'dim'); return false; }
         swingFX('cut', true); SFX.crit();
         hitEnemy(e, b.a.dmg * C.dmgScale * 2.5, true);
         say('<b>'+b.k+'</b> opens '+e.T.id+' up', 'good');
         return true; } },
-    { id:'SWEEP', cd:6, txt:'all adjacent', use: b => {
+    { id:'SWEEP', cd:6, desc:'A full swing to everything within one cell. A corridor wastes it, a junction does not.', use: b => {
         const near = enemies.filter(e => e.hp > 0 &&
           Math.max(Math.abs(e.x-P.x), Math.abs(e.y-P.y)) <= 1);
         if (!near.length) { say('nothing within reach', 'dim'); return false; }
@@ -2886,7 +2938,7 @@ const SKILLS = {
         return true; } },
   ],
   VECTOR: [
-    { id:'LANCE', cd:5, txt:'reach 3', use: b => {
+    { id:'LANCE', cd:5, desc:'Reaches three cells down the line you face. Walls stop it, distance does not.', use: b => {
         const d = DIR[P.face];
         let e = null;
         for (let n = 1; n <= 3 && !e; n++) {
@@ -2899,13 +2951,13 @@ const SKILLS = {
         hitEnemy(e, b.a.dmg * C.dmgScale * 1.4, false);
         say('<b>'+b.k+'</b> reaches '+e.T.id+' from cover', 'good');
         return true; } },
-    { id:'SLIP', cd:5, txt:'evade 2t', use: b => {
+    { id:'SLIP', cd:5, desc:'Two ticks in which blows and clamps both miss. The only answer to a grab that is not more armour.', use: b => {
         b.dodge = 2; SFX.swap();
         say('<b>'+b.k+'</b> stops standing still — evading 2 ticks', 'good');
         return true; } },
   ],
   CONDUIT: [
-    { id:'MEND', cd:5, txt:'heal one', use: b => {
+    { id:'MEND', cd:5, desc:'Restores 34 to the worst-hurt shell. No charges — the recharge is the whole limit.', use: b => {
         const t = bodies.filter(v => v.hp > 0 && v.hp < v.a.integ)
                         .sort((x,y) => x.hp/x.a.integ - y.hp/y.a.integ)[0];
         if (!t) { say('nothing to mend', 'dim'); return false; }
@@ -2913,7 +2965,7 @@ const SKILLS = {
         t.dirty = true; swingFX('pulse', true); SFX.pulse();
         say('<b>'+b.k+'</b> mends '+t.k+' — +'+b.a.repair, 'good');
         return true; } },
-    { id:'WASH', cd:5, txt:'heal all, half', use: b => {
+    { id:'WASH', cd:5, desc:'Half as much to every damaged shell at once. Cheaper per point, worse when one of them is dying.', use: b => {
         const t = bodies.filter(v => v.hp > 0 && v.hp < v.a.integ);
         if (!t.length) { say('nothing to mend', 'dim'); return false; }
         const amt = Math.round(b.a.repair / 2);
@@ -3282,7 +3334,7 @@ function cooldownTick() {
 }
 
 function dispatch(a) {
-  if (bootEl || menuOpen || !alive()) { queued = a; return; }
+  if (bootEl || menuOpen || statusOpen || !alive()) { queued = a; return; }
 
   // Turning where you stand is not an event in the world, and neither is
   // deciding whose ability you want — both used to cost a tick, and that is
@@ -3322,6 +3374,15 @@ const MAP = { KeyW:'F', ArrowUp:'F', KeyS:'B', ArrowDown:'B', KeyA:'L', KeyD:'R'
               Digit1:'B0', Digit2:'B1', Digit3:'B2', Digit4:'B3' };
 addEventListener('keydown', ev => {
   if (bootEl) { ev.preventDefault(); endBoot(); return; }
+  // the status screen eats the keys it uses, so A and D page instead of strafe
+  if (statusOpen) {
+    ev.preventDefault();
+    if (ev.code === 'KeyA' || ev.code === 'ArrowLeft')  pageStatus(-1);
+    else if (ev.code === 'KeyD' || ev.code === 'ArrowRight') pageStatus(1);
+    else if (ev.code === 'Escape' || ev.code === 'KeyC') closeStatus();
+    return;
+  }
+  if (ev.code === 'KeyC' && !menuOpen) { ev.preventDefault(); openStatus(); return; }
   if (MAP[ev.code]) { ev.preventDefault(); dispatch(MAP[ev.code]); return; }
   if (ev.code === 'Tab')   { ev.preventDefault(); transitZone(); }
   if (ev.code === 'Escape') { menuOpen ? closeMenu() : openMenu(); return; }
@@ -3460,6 +3521,21 @@ function applyPortraitStrip(img) {
   note('PORTRAITS · ' + cw + '×' + ch + ' ×' + n);
 }
 
+// Full-body renders for the status screen. Same strip layout as the portraits,
+// cut in the order of the roster rather than the loadout, so a shell that is
+// not printed still has a page.
+function applyPartyFull(img) {
+  const roster = Object.keys(ARCH);
+  const n = roster.length, cw = Math.floor(img.width / n), ch = img.height;
+  roster.forEach((k, i) => {
+    const [c, x] = mkc(cw, ch);
+    x.drawImage(img, i*cw, 0, cw, ch, 0, 0, cw, ch);
+    FULL[k] = c;
+  });
+  if (statusOpen) buildStatus();
+  note('FULL BODIES · ' + cw + '×' + ch + ' ×' + n);
+}
+
 addEventListener('dragover', e => { e.preventDefault(); });
 addEventListener('drop', e => {
   e.preventDefault();
@@ -3485,7 +3561,7 @@ addEventListener('drop', e => {
 // Left as placeholders here. datum_inline.py swaps them for data URIs so the
 // prototype stays a single self-contained file. Untouched = procedural sprites.
 const EMBED = { enemies: "__ENEMIES__", portraits: "__PORTRAITS__",
-                textures: "__TEXTURES__" };
+                textures: "__TEXTURES__", full: "__FULL__" };
 const EMBED_SFX = "__SFX__";       // JSON map of key -> data URI, or the marker
 
 // Stamped by datum_inline.py at bake time. It is in the tab title so a stale
@@ -3542,6 +3618,7 @@ function loadEmbedded() {
   go(EMBED.textures, applyTextureStrip);
   go(EMBED.portraits, applyPortraitStrip);
   go(EMBED.enemies, applyEnemySheet);
+  go(EMBED.full, applyPartyFull);
   loadEmbeddedSfx();
 }
 
@@ -3633,6 +3710,81 @@ function buildMenu() {
 
 function openMenu()  { menuOpen = true;  menuEl.style.display = 'flex'; buildMenu(); }
 function closeMenu() { menuOpen = false; menuEl.style.display = 'none'; }
+
+// ── Shell status ───────────────────────────────────────────────
+// One archetype to a screen, paged with A/D. The full-body render is the page
+// and the numbers sit beside it, because the shell is a thing you were issued,
+// not a row in a table. Eight ability sockets, two of them filled — the empty
+// six are the same promise the sealed shells in the menu make.
+const FULL = {};                       // archetype -> full-body canvas, if supplied
+let statusOpen = false, statusIdx = 0;
+const statusEl = document.createElement('div');
+statusEl.id = 'status';
+document.body.appendChild(statusEl);
+
+function buildStatus() {
+  const roster = Object.keys(ARCH);
+  const name = roster[((statusIdx % roster.length) + roster.length) % roster.length];
+  const a = ARCH[name], sk = SKILLS[name] || [];
+  const b = bodies.find(v => v.k === name);
+  const prev = roster[(statusIdx + roster.length - 1) % roster.length];
+  const next = roster[(statusIdx + 1) % roster.length];
+
+  const par = (label, val) => '<div><span>' + label + '</span><b>' + val + '</b></div>';
+  const sock = (i) => {
+    const s = sk[i];
+    const code = 'S-' + String(101 + roster.indexOf(name) * 8 + i);
+    if (!s) return '<div class="void"><div class="k">SOCKET ' +
+      String(i + 1).padStart(2, '0') + '</div><div class="n">NO PATTERN</div>' +
+      '<div class="d">Empty. Nothing has been grafted here.</div>' +
+      '<div class="cd">' + code + '</div></div>';
+    const cd = b && b.cd && b.cd[i] > 0
+      ? b.cd[i] + 't LEFT' : 'READY · ' + s.cd + 't CYCLE';
+    return '<div><div class="k">' + (i ? 'R' : 'F') + ' · ' + cd +
+      '</div><div class="n">' + s.id + '</div><div class="d">' + s.desc + '</div>' +
+      '<div class="cd">' + code + '</div></div>';
+  };
+
+  statusEl.innerHTML =
+    '<div class="body"><canvas></canvas>' +
+    '<i class="tick t1"></i><i class="tick t2"></i></div>' +
+    '<div class="col">' +
+      '<div class="nav"><span class="arw">‹ ' + prev + '</span>' +
+      '<h1>' + name + '</h1><span class="arw">' + next + ' ›</span></div>' +
+      '<div class="role">' + a.note + (b ? ' · integrity ' +
+        Math.round(b.hp) + ' of ' + a.integ : ' · not printed') + '</div>' +
+      '<div class="par">' +
+        par('INTEG', a.integ) + par('DMG', a.dmg) +
+        par('PUNISH', a.punish.toFixed(1) + '×') +
+        par('EYE', a.eye.toFixed(2) + 'm') +
+      '</div>' +
+      '<div class="hd"><span>ABILITY SOCKETS</span><span>2 OF 8 FILLED</span></div>' +
+      '<div class="sock">' + [0,1,2,3,4,5,6,7].map(sock).join('') + '</div>' +
+      '<div class="foot">A D or ‹ › to page · ESC or C to close</div>' +
+    '</div>';
+
+  // the full-body render if one was baked in, the portrait if not
+  const cv = statusEl.querySelector('canvas');
+  const src = FULL[name] || PORTRAIT[name];
+  if (src) {
+    cv.width = src.width; cv.height = src.height;
+    cv.getContext('2d').drawImage(src, 0, 0);
+  }
+}
+
+function openStatus() {
+  statusOpen = true; statusEl.style.display = 'flex';
+  const roster = Object.keys(ARCH);
+  const here = bodies[active] ? roster.indexOf(bodies[active].k) : 0;
+  statusIdx = here < 0 ? 0 : here;      // opens on the shell you are steering
+  buildStatus(); SFX.swap();
+}
+function closeStatus() { statusOpen = false; statusEl.style.display = 'none'; }
+function pageStatus(d) {
+  const n = Object.keys(ARCH).length;
+  statusIdx = ((statusIdx + d) % n + n) % n;
+  buildStatus(); SFX.turn();
+}
 
 // ── Prologue ───────────────────────────────────────────────────
 // An inventory, not a monologue. The clerical register the original will use

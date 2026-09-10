@@ -9,6 +9,7 @@ ASSETS = {
     '__ENEMIES__':   'datum_enemies_sheet.png',
     '__PORTRAITS__': 'datum_portrait_strip.png',
     '__TEXTURES__':  'datum_textures.png',
+    '__FULL__':      'datum_party_full.png',
 }
 
 MIME = {'.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
