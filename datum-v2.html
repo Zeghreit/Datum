@@ -307,14 +307,21 @@ const CARDS = [
   { id:'T-22', role:'ОПОРА', size:3, pit:'+', type:'опора',  ticks:4, eff:'опора с питанием' },
   { id:'T-23', role:'ОПОРА', size:6, pit:'-', type:'опора',  ticks:6, eff:'просевшая' },
   { id:'T-24', role:'ОПОРА', size:4, pit:'—', type:'опора',  ticks:5, eff:'клеймо на опоре' },
-  { id:'T-25', role:'БОЙ',  size:4,  pit:'—', type:'бой',    ticks:6, eff:'SEAM' },
-  { id:'T-26', role:'БОЙ',  size:6,  pit:'-', type:'бой',    ticks:8, eff:'SEAL' },
-  { id:'T-27', role:'БОЙ',  size:3,  pit:'—', type:'бой',    ticks:5, eff:'DRAY' },
-  { id:'T-28', role:'БОЙ',  size:4,  pit:'-', type:'бой',    ticks:6, eff:'TALLY' },
-  { id:'T-29', role:'БОЙ',  size:6,  pit:'—', type:'бой',    ticks:8, eff:'BREAK' },
-  { id:'T-30', role:'БОЙ',  size:11, pit:'-', type:'бой',    ticks:11, eff:'КАДАВР' },
 ];
-const TYPE_IX = { 'проход':0, 'вода':1, 'питание':2, 'опора':3, 'бой':4 };
+const TYPE_IX = { 'проход':0, 'вода':1, 'питание':2, 'опора':3 };
+
+// The second archetype's compartments. They are not in the deck until the
+// qualia is found, and they are the ones that reward a grapple.
+const EXTRA = [
+  { id:'Q-01', role:'СЦЕП', size:4, pit:'—', type:'проход',  ticks:5, down:true, up:true, eff:'колодец насквозь' },
+  { id:'Q-02', role:'СЦЕП', size:3, pit:'+', type:'питание', ticks:4, up:true,   eff:'люк вверх, питание' },
+  { id:'Q-03', role:'СЦЕП', size:6, pit:'—', type:'опора',   ticks:7, down:true, eff:'шахта вниз, тяжёлая' },
+  { id:'Q-04', role:'СЦЕП', size:4, pit:'-', type:'вода',    ticks:5, up:true,   eff:'вода сверху, люк' },
+];
+const ARCH = {
+  BALLAST: { name:'БАЛЛАСТ', grapple:false },
+  VECTOR:  { name:'ВЕКТОР',  grapple:true  },
+};
 
 // The hub is not a record you can draw: it is where the structure begins.
 // Ticks do not run in it, so entering it is free.
@@ -336,7 +343,7 @@ const KNOWN = {};                    // what you have lived through
 // Room art per type, injected by build/make_v2.py as window.__ROOMART__.
 // Without it the cards show a glyph, so the prototype never depends on art.
 const ROOMART = (typeof window !== 'undefined' && window.__ROOMART__) ? window.__ROOMART__ : {};
-const TYPE_GLYPH = { 'проход':'▤', 'вода':'≋', 'питание':'⌁', 'опора':'▮', 'бой':'✕', 'хаб':'◉' };
+const TYPE_GLYPH = { 'проход':'▤', 'вода':'≋', 'питание':'⌁', 'опора':'▮', 'хаб':'◉' };
 
 // ── state ───────────────────────────────────────────────────────
 let S = null;
@@ -349,6 +356,7 @@ function newRun() {
     pos: { x: 0, z: 0 },             // local metres, origin = room centre
     yaw: 0, pitch: 0,
     ticks: 0, placed: 0, mat: 0,
+    team: ['BALLAST'], arch: 0,
     came: null,                      // the card of the room you are in
     draft: null,
     over: null,
@@ -362,17 +370,22 @@ function newRun() {
   hud();
 }
 
+function hasGrapple() { return !!(ARCH[S.team[S.arch]] && ARCH[S.team[S.arch]].grapple); }
+function deck() { return S.team.indexOf('VECTOR') >= 0 ? CARDS.concat(EXTRA) : CARDS; }
+function fightAt(r) { return Math.abs((r.x*37 + r.y*53 + r.z*29 + 7) % 100) < 34; }
+
 // ── the deal: deterministic, opaque, always with a way on ────────
 function deal(depth, cell, above, water, power, support, read) {
   const a = above ? (TYPE_IX[above.type] * 11 + above.size * 13 + above.ticks * 7) : 3;
   const seed = (depth + 1) * 7 + (cell.x * 3 + cell.z) * 5 + (cell.y || 0) * 11 + a
              + water * 17 + power * 19 + support * 23 + read * 29 + 31;
   const step = 1 + ((depth + 1) % 3);
+  const pool = deck();
   const out = [];
   for (let k = 0; k < 3; k++) {
-    let idx = ((seed + k * step * 7) % CARDS.length + CARDS.length) % CARDS.length;
-    let c = CARDS[idx], guard = 0;
-    while (out.some(o => o.id === c.id) && guard++ < 40) { idx = (idx + 1) % CARDS.length; c = CARDS[idx]; }
+    let idx = ((seed + k * step * 7) % pool.length + pool.length) % pool.length;
+    let c = pool[idx], guard = 0;
+    while (out.some(o => o.id === c.id) && guard++ < 40) { idx = (idx + 1) % pool.length; c = pool[idx]; }
     out.push(c);
   }
   const bad = (power >= 3) || (water >= 2) || (support === 0 && depth > 1);
@@ -383,8 +396,8 @@ function deal(depth, cell, above, water, power, support, read) {
   // a compartment offered here must be able to continue: keep the vertical
   // gates that the card promises, and guarantee at least one more horizontal
   if (!out.some(c => c.down || c.up)) {
-    const pool = CARDS.filter(c => c.down || c.up);
-    const pick = pool[seed % pool.length];
+    const pool2 = pool.filter(c => c.down || c.up);
+    const pick = pool2[seed % pool2.length];
     let at = out[0].blind ? 1 : 0;
     if (out[at].blind) at = 2;
     out[at] = pick;
@@ -820,8 +833,14 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
     boxInto(AM, cw - 0.32, 0.04, 0.05, sp.x, 1.06, sp.z + (sp.z > 0 ? -cd/2 : cd/2));
     r.cabLocal = { x: sp.x, z: sp.z };
     take(sp.x, sp.z, cw, cd);
-  } else if (t.type === 'бой') {
-    // debris: seeded, but rejected when it lands in a doorway or on you
+  } else {
+    // проход: a rail along the ceiling and a lamp in the middle
+    boxInto(MT, 0.2, 0.2, I - 1.4, 0, H - 0.45, 0);
+    boxInto(AM, 0.9, 0.04, 0.9, 0, H - 0.2, 0);
+  }
+
+  // debris wherever something died — the skirmish leaves a mark on the room
+  if (r.fight) {
     const R = mulberry32(r.x*31 + r.y*17 + r.z*7 + 5);
     let n = 0;
     for (let i = 0; i < 40 && n < 7; i++) {
@@ -833,15 +852,14 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
       take(x, z, w, d);
       n++;
     }
+  }
+  // the sealed cabinet stands in support compartments
+  if (t.type === 'опора' && r.cabLocal === undefined) {
     const cw = 1.1, cd = 0.55, sp = wallSpot(cw, cd);
     boxInto(MT, cw, 1.5, cd, sp.x, 0.75, sp.z);
     boxInto(AM, cw - 0.32, 0.04, 0.05, sp.x, 1.06, sp.z + (sp.z > 0 ? -cd/2 : cd/2));
     r.cabLocal = { x: sp.x, z: sp.z };
     take(sp.x, sp.z, cw, cd);
-  } else {
-    // проход: a rail along the ceiling and a lamp in the middle
-    boxInto(MT, 0.2, 0.2, I - 1.4, 0, H - 0.45, 0);
-    boxInto(AM, 0.9, 0.04, 0.9, 0, H - 0.2, 0);
   }
 
   // flooded from above: water that ran down the column is visible on the floor
@@ -929,6 +947,9 @@ function promptFor(gate) {
   const v = GATES[gate.dir].v;
   const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
   const name = GATES[gate.dir].name;
+  if ((gate.dir === 'UP' || gate.dir === 'DOWN') && !hasGrapple()) {
+    return { text: 'E · ' + name + ' · нужен трос', mode: 'locked' };
+  }
   if (r.sealed && r.sealed[gate.dir]) {
     return { text: 'E · ' + name + ' · запечатано сверкой', mode: 'sealed' };
   }
@@ -1025,6 +1046,7 @@ function placeChosen() {
   };
   const col2 = columnState(nx, ny, nz);
   room.flood = col2.water >= 2;
+  room.fight = fightAt(room);
   S.rooms[key(nx, ny, nz)] = room;
   S.placed++;
   closeDraft();
@@ -1056,6 +1078,17 @@ function transition(dir) {
   S.pitch = 0;
   S.came = n.card;
   S.ticks += n.card.ticks;          // the turn is the gate-to-gate crossing
+
+  // a skirmish resolves the moment you are inside: no second screen, no
+  // turn order. The room decides whether it happens, so it can be learned.
+  let fightNote = '';
+  if (n.fight && !n.fought) {
+    n.fought = true;
+    const cost = 2 + (n.card.size >= 11 ? 2 : 0);
+    const loot = 1 + (n.card.type === 'опора' ? 1 : 0);
+    S.ticks += cost; S.mat += loot;
+    fightNote = ' · стычка +' + cost + ' такта, материал +' + loot;
+  }
   rebuild();
 
   // the leaf you just passed through must stay open while the camera crosses
@@ -1072,6 +1105,7 @@ function transition(dir) {
     axis: vertical ? { x:n.x*C.size, z:n.z*C.size } : null,
   };
 
+  if (fightNote) callout('ВХОД В ОТСЕК' + fightNote);
   if (S.ticks >= nextSync()) sync();
   hud();
 }
@@ -1151,7 +1185,8 @@ function hud() {
 
   const col = columnState(r.x, r.y, r.z);
   document.getElementById('crumbs').textContent =
-    'отсек ' + (r.card.id) + ' · ярус ' + (r.y >= 0 ? '+' + r.y : r.y) +
+    ARCH[S.team[S.arch]].name + (hasGrapple() ? ' · трос' : '') + ' · мат ' + (S.mat||0) +
+    ' · отсек ' + (r.card.id) + ' · ярус ' + (r.y >= 0 ? '+' + r.y : r.y) +
     ' · шлюзов ' + r.gates.length +
     ' · над тобой вода ' + col.water + ' пит ' + col.power + ' опора ' + col.support;
 
@@ -1347,9 +1382,16 @@ function tryCode() {
   const got = S.code.entered;
   if (need && got.length === 3 && got[0] === need[0] && got[1] === need[1] && got[2] === need[2]) {
     r.cabOpen = true;
-    S.mat = (S.mat || 0) + 3;
     closeCode();
-    callout('ШКАФ ОТКРЫТ · МАТЕРИАЛ +3');
+    if (S.team.indexOf('VECTOR') < 0) {
+      // the first cabinet holds a qualia, not loot: a whole second archetype,
+      // its compartments, and the grapple that opens the shafts
+      S.team.push('VECTOR');
+      callout('КВАЛИА · АРХЕТИП «ВЕКТОР» · ТРОС И НОВЫЕ ОТСЕКИ');
+    } else {
+      S.mat = (S.mat || 0) + 3;
+      callout('ШКАФ ОТКРЫТ · МАТЕРИАЛ +3');
+    }
     hud();
   } else {
     S.code.entered = [];
@@ -1403,6 +1445,15 @@ addEventListener('keydown', (ev) => {
 
   if (k === 'KeyM') { ev.preventDefault();
     document.getElementById('cut').classList.contains('on') ? closeCut() : openCut(); return; }
+  if (k === 'Tab') {
+    ev.preventDefault();
+    if (S.team.length > 1) {
+      S.arch = (S.arch + 1) % S.team.length;
+      callout('АРХЕТИП · ' + ARCH[S.team[S.arch]].name + (hasGrapple() ? ' · трос' : ' · без троса'));
+      hud();
+    }
+    return;
+  }
   if (k === 'KeyR') { newRun(); document.getElementById('end').classList.remove('on'); return; }
   if (k === 'Escape') { if (S.draft) closeDraft(); else closeCut(); return; }
   if (S.over) return;
@@ -1432,6 +1483,9 @@ addEventListener('keydown', (ev) => {
     if (!g) { bump(); return; }
     const r = S.rooms[S.here];
     const v = GATES[g.dir].v;
+    if ((g.dir === 'UP' || g.dir === 'DOWN') && !hasGrapple()) {
+      callout('НУЖЕН ТРОС · ЭТОТ АРХЕТИП ХОДИТ ТОЛЬКО ПО СВОЕМУ ЯРУСУ'); return;
+    }
     if (r.sealed && r.sealed[g.dir]) { callout('ШЛЮЗ ' + GATES[g.dir].name.toUpperCase() + ' ЗАПЕЧАТАН СВЕРКОЙ'); return; }
     const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
     if (n) {
