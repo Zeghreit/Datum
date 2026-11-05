@@ -429,7 +429,26 @@ const TEX = {
   floor: texPanel('#3a3a35', 23, false),
   ceil:  texPanel('#2b2b28', 41, true),
   metal: texPanel('#54544e', 59, false),
+  seal:  texSeal(),
 };
+
+// A gate whose far side is empty is not a doorway, it is a bulkhead: hazard
+// stripes and a red seam, so "there is nothing behind this yet" reads as a
+// fact about the structure instead of a hole in the renderer.
+function texSeal() {
+  const [c, x] = mkc(32, 32);
+  x.fillStyle = '#1c1e22'; x.fillRect(0, 0, 32, 32);
+  x.save(); x.translate(16, 16); x.rotate(-Math.PI/4); x.translate(-24, -24);
+  for (let i = 0; i < 48; i += 10) { x.fillStyle = '#2e2a22'; x.fillRect(i, 0, 5, 48); }
+  x.restore();
+  for (let i = 0; i < 40; i++) { x.fillStyle = 'rgba(0,0,0,' + (0.1 + Math.random()*0.3) + ')';
+    x.fillRect((Math.random()*32)|0, (Math.random()*32)|0, 1, 1); }
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestMipmapNearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 3);
+  return t;
+}
 
 function ps1ify(mat) {
   mat.onBeforeCompile = (sh) => {
@@ -449,10 +468,11 @@ const M = {
   wall:  ps1ify(new THREE.MeshLambertMaterial({ map: TEX.wall,  color: 0xbcbcb4 })),
   ceil:  ps1ify(new THREE.MeshLambertMaterial({ map: TEX.ceil,  color: 0x8a8a84 })),
   metal: ps1ify(new THREE.MeshLambertMaterial({ map: TEX.metal, color: 0xa6a29a })),
+  seal:  ps1ify(new THREE.MeshLambertMaterial({ map: TEX.seal,  color: 0x8e887c })),
   amber: new THREE.MeshBasicMaterial({ color: 0xe8a63c }),
+  red:   new THREE.MeshBasicMaterial({ color: 0xc0432c }),
   water: new THREE.MeshLambertMaterial({ color: 0x29394a, transparent: true, opacity: 0.7 }),
   dark:  new THREE.MeshLambertMaterial({ color: 0x101215 }),
-  grass: null,
 };
 
 (function loadStrip() {
@@ -527,7 +547,7 @@ function rebuild() {
 
   // one failing light per room, amber where the room is powered
   for (const r of list) {
-    const l = new THREE.PointLight(r === here ? 0xd2d7dd : 0x9aa0a8, r === here ? 1.6 : 0.7, 13, 2);
+    const l = new THREE.PointLight(r === here ? 0xd6dbe1 : 0xa8aeb6, r === here ? 1.9 : 0.95, 15, 2);
     l.position.set(r.x*C.size, r.y*C.height + C.height - 0.6, r.z*C.size);
     world.add(l);
   }
@@ -545,13 +565,19 @@ function rebuild() {
 let doors = [];
 
 function mkDoor(r, dir) {
-  const HS = C.inner/2, GW = C.gateW, GH = C.gateH, T = C.wallT;
+  const HS = C.inner/2, GW = C.gateW, GH = C.gateH;
   const ox = r.x*C.size, oy = r.y*C.height, oz = r.z*C.size;
   const half = GW/2, leafW = half - 0.02, th = 0.07;
   const vert = (dir === 'UP' || dir === 'DOWN');
 
+  // is there anything on the far side of this gate?
+  const v = GATES[dir].v;
+  const beyond = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
+  const leafMat = beyond ? M.metal : M.seal;
+  const seamMat = beyond ? M.amber : M.red;
+
   const group = new THREE.Group();
-  const mk = (w, h, d) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.metal);
+  const mk = (w, h, d) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), leafMat);
   const leaves = [], bases = [];
 
   for (let i = 0; i < 2; i++) {
@@ -576,8 +602,8 @@ function mkDoor(r, dir) {
     leaves.push(m); bases.push(base.clone());
   }
 
-  // amber seam where the leaves meet
-  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, vert ? 0.09 : GH - 0.1, 0.03), M.amber);
+  // seam where the leaves meet
+  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, vert ? 0.09 : GH - 0.1, 0.03), seamMat);
   if (vert) { seam.scale.z = 70; seam.position.set(ox, oy + (dir === 'UP' ? C.height - 0.09 : 0.09), oz); }
   else if (dir === 'N' || dir === 'S') seam.position.set(ox, oy + GH/2, oz + (dir === 'N' ? -HS + 0.12 : HS - 0.12));
   else seam.position.set(ox + (dir === 'E' ? HS - 0.12 : -HS + 0.12), oy + GH/2, oz);
@@ -811,7 +837,8 @@ function paintDraft() {
   bv.className = sel ? 'sel' : '';
   document.getElementById('biglab').textContent = sel ? 'масштаб, м' : 'масштаб';
   document.getElementById('prompt2').innerHTML =
-    'шлюз: <em>' + GATES[d.dir].name + '</em>. три записи реестра; поля читаются, личность — нет.' +
+    'шлюз: <em>' + GATES[d.dir].name + '</em> · заглушён, за ним пусто. ' +
+    'три записи реестра; поля читаются, личность — нет.' +
     (d.bad ? '<br><em>сектор в плохом состоянии: одна запись нечитаема.</em>' : '');
   const box = document.getElementById('cards');
   box.innerHTML = d.cards.map((c, i) => {
@@ -1094,11 +1121,15 @@ addEventListener('keydown', (ev) => {
     const r = S.rooms[S.here];
     const v = GATES[g.dir].v;
     const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
-    // the leaves part first; what happens next waits for them to be out of
-    // the way, so the door is a door and not a menu button
-    openDoor(r, g.dir);
-    if (n) setTimeout(() => { if (!S.draft && !S.over) transition(g.dir); }, 220);
-    else   setTimeout(() => { if (!S.draft && !S.over) openDraft(g.dir); }, 260);
+    if (n) {
+      // the leaves part first, then you cross
+      openDoor(r, g.dir);
+      setTimeout(() => { if (!S.draft && !S.over) transition(g.dir); }, 220);
+    } else {
+      // sealed: leaves stay shut, the registry asks what goes behind them.
+      // Opening a bulkhead onto nothing was the black rectangle.
+      openDraft(g.dir);
+    }
   }
 });
 addEventListener('keyup', (ev) => { keys[ev.code] = false; });
