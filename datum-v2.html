@@ -168,17 +168,19 @@
   #codebody .hint { font-size:10px; letter-spacing:.16em; color:var(--dim2); text-transform:uppercase; }
   #codebody .hint.amber { color:var(--amb); }
   /* ── cut view ────────────────────────────────────────────────── */
-  #cut { position:fixed; inset:0; z-index:40; background:rgba(6,7,8,.97); display:none;
+  #cut { position:fixed; inset:0; z-index:40; display:none; pointer-events:none;
          padding:64px 26px 26px; }
-  #cut.on { display:flex; gap:26px; }
-  #cutc { flex:0 0 auto; }
-  #cutside { flex:1; max-width:360px; font-size:11px; letter-spacing:.06em; color:var(--dim);
+  #cut.on { display:block; }
+  
+  #cutside { width:262px; background:rgba(6,7,8,.84); padding:12px 14px; font-size:11px; letter-spacing:.06em; color:var(--dim);
              line-height:2; }
   #cutside h3 { font-size:10px; letter-spacing:.22em; color:var(--dim2); text-transform:uppercase;
                 margin:0 0 10px; font-weight:600; }
   #cutside .row { display:flex; justify-content:space-between; border-bottom:1px solid #171a1e;
                   padding:5px 0; }
   #cutside .row b { color:var(--ink); font-weight:600; }
+  #cutside .maphint { margin-top:12px; color:#6b7078; line-height:1.8; }
+  #cutside .maphint.dim { color:#43484f; }
 
   /* ── end screen ──────────────────────────────────────────────── */
   #end { position:fixed; inset:0; z-index:50; background:rgba(6,7,8,.96); display:none;
@@ -239,7 +241,7 @@
   <div id="codebody"></div>
 </div>
 <div id="cut">
-  <div id="cutc"><canvas id="cutcanvas"></canvas></div>
+  
   <div id="cutside"></div>
 </div>
 
@@ -451,6 +453,7 @@ function sizeRT() {
   renderer.setSize(Math.max(2, Math.round(h * cw / ch)), h, false);
   camera.aspect = cw / ch;
   camera.updateProjectionMatrix();
+  if (mapCam) { mapCam.aspect = cw / ch; mapCam.updateProjectionMatrix(); }
 }
 
 function mkc(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
@@ -1221,72 +1224,128 @@ function finish(title, text) {
   if (document.pointerLockElement) document.exitPointerLock();
 }
 
-// ── cut: a vertical slice at the player's z ─────────────────────
-function openCut() {
-  document.getElementById('cut').classList.add('on');
-  drawCut();
-  const r = S.rooms[S.here];
-  const side = document.getElementById('cutside');
-  side.innerHTML = '<h3>разрез</h3>' +
-    '<div class="row"><span>отсек</span><b>' + r.card.id + '</b></div>' +
-    '<div class="row"><span>ярус</span><b>' + r.y + '</b></div>' +
-    '<div class="row"><span>шлюзов</span><b>' + r.gates.length + '</b></div>' +
-    '<div class="row"><span>отсеков всего</span><b>' + Object.keys(S.rooms).length + '</b></div>' +
-    '<div class="row"><span>такт</span><b>' + S.ticks + '</b></div>' +
-    '<div class="row"><span>до сверки</span><b>' + Math.max(0, nextSync() - S.ticks) + '</b></div>' +
-    '<p style="margin-top:18px;color:#5d636c;line-height:1.9">' +
-    'срез по линии восток-запад на твоей глубине. вода идёт вниз, питание сверху, ' +
-    'опора держит то, что над ней.</p>';
+// ── the map: the structure itself, turned in the hand ───────────
+// A section drawing was never going to carry a clue you have to find. The
+// structure is three-dimensional, so the map is too: drag to turn it, wheel
+// to pull back. Each compartment shows its sigil on the face you can see,
+// which is how you read a code off a column you have already climbed.
+let mapScene = null, mapCam = null, mapOpen = false;
+let mapYaw = 0.85, mapPitch = 0.52, mapDist = 52;
+
+const MAP_COL = {
+  'вода':   0x2b3d4d,
+  'питание':0x4a3a1c,
+  'опора':  0x3c3f45,
+  'проход': 0x34383d,
+  'хаб':    0x5b4a22,
+};
+
+function mapCenter() {
+  let x0=9e9, x1=-9e9, y0=9e9, y1=-9e9, z0=9e9, z1=-9e9;
+  for (const k in S.rooms) {
+    const r = S.rooms[k];
+    x0=Math.min(x0,r.x); x1=Math.max(x1,r.x);
+    y0=Math.min(y0,r.y); y1=Math.max(y1,r.y);
+    z0=Math.min(z0,r.z); z1=Math.max(z1,r.z);
+  }
+  if (x0 > x1) return new THREE.Vector3(0,0,0);
+  return new THREE.Vector3((x0+x1)/2*C.size, (y0+y1)/2*C.height + C.height/2, (z0+z1)/2*C.size);
 }
-function closeCut() { document.getElementById('cut').classList.remove('on'); }
 
-function drawCut() {
-  const cv = document.getElementById('cutcanvas');
-  const here = S.rooms[S.here];
-  const xs = [], ys = [];
-  for (const k in S.rooms) { const r = S.rooms[k]; xs.push(r.x); ys.push(r.y); }
-  xs.push(here.x); ys.push(here.y);
-  const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-  const y0 = Math.max.apply(null, ys), y1 = Math.min.apply(null, ys);
-  const cols = Math.max(1, x1 - x0 + 1), rows = Math.max(1, y0 - y1 + 1);
-  const cw = Math.min(96, Math.floor(700 / Math.max(cols, 1)));
-  const chh = 44, padL = 46, padT = 8;
-  cv.width = padL + cols*cw + 4;
-  cv.height = padT + rows*chh + 4;
-  cv.style.width = cv.width + 'px'; cv.style.height = cv.height + 'px';
-  const x = cv.getContext('2d');
-  x.fillStyle = '#060708'; x.fillRect(0, 0, cv.width, cv.height);
+function buildMap() {
+  if (mapScene) {
+    mapScene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    mapScene = null;
+  }
+  mapScene = new THREE.Scene();
+  mapScene.background = new THREE.Color(0x060708);
+  mapScene.add(new THREE.AmbientLight(0xffffff, 0.42));
+  const d = new THREE.DirectionalLight(0xffffff, 0.72);
+  d.position.set(1, 2.2, 1.4);
+  mapScene.add(d);
 
-  for (let yy = y0; yy >= y1; yy--) {
-    const row = y0 - yy;
-    const py = padT + row*chh;
-    x.fillStyle = '#3a3f47'; x.font = '600 11px Segoe UI, Arial'; x.textAlign = 'right';
-    x.fillText((yy >= 0 ? '+' + yy : String(yy)), padL - 12, py + chh/2 + 4);
-    for (let xx = x0; xx <= x1; xx++) {
-      const px = padL + (xx - x0)*cw + 3, w = cw - 6, h = chh - 6;
-      const r = S.rooms[key(xx, yy, here.z)];
-      if (!r) { x.strokeStyle = '#161a1e'; x.lineWidth = 1; x.strokeRect(px, py + 3, w, h); continue; }
-      const isHere = (key(xx, yy, here.z) === S.here);
-      x.fillStyle = r.card.type === 'вода' ? '#22303d'
-                  : r.card.type === 'питание' ? '#2e2617'
-                  : r.card.type === 'опора' ? '#24262a' : '#1c1f24';
-      x.fillRect(px, py + 3, w, h);
-      x.strokeStyle = isHere ? '#e8a63c' : '#2c3037';
-      x.lineWidth = isHere ? 2 : 1;
-      x.strokeRect(px + .5, py + 3.5, w - 1, h - 1);
-      x.fillStyle = isHere ? '#e8a63c' : '#8b919b';
-      x.font = '600 10px Segoe UI, Arial'; x.textAlign = 'left';
-      x.fillText(r.card.id, px + 6, py + 16);
-      x.fillStyle = '#5d636c'; x.font = '9px Segoe UI, Arial';
-      x.fillText(r.gates.join(' '), px + 6, py + 29);
+  const S0 = C.size, H = C.height;
+  const geo = new THREE.BoxGeometry(S0*0.9, H*0.82, S0*0.9);
+  const edgeGeo = new THREE.EdgesGeometry(geo);
+
+  for (const k in S.rooms) {
+    const r = S.rooms[k];
+    const col = MAP_COL[r.card.type] !== undefined ? MAP_COL[r.card.type] : 0x2a2d32;
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: col }));
+    m.position.set(r.x*S0, r.y*H + H/2, r.z*S0);
+    mapScene.add(m);
+
+    const edges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({
+      color: k === S.here ? 0xe8a63c : 0x1a1d21 }));
+    edges.position.copy(m.position);
+    edges.scale.set(k === S.here ? 1.03 : 1, k === S.here ? 1.06 : 1, k === S.here ? 1.03 : 1);
+    mapScene.add(edges);
+
+    // the sigil sits on the south face: readable when you turn the structure
+    const sg = new THREE.Mesh(new THREE.PlaneGeometry(S0*0.52, S0*0.52),
+      new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true, opacity: 0.92 }));
+    sg.position.set(r.x*S0, r.y*H + H/2, r.z*S0 + S0*0.455);
+    mapScene.add(sg);
+
+    // where you are, as a pin
+    if (k === S.here) {
+      const pin = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffd479 }));
+      pin.position.set(r.x*S0 + S.pos.x, r.y*H + C.eye, r.z*S0 + S.pos.z);
+      mapScene.add(pin);
     }
   }
+
+  const g = new THREE.GridHelper(160, 20, 0x1b2026, 0x101316);
+  g.position.y = -0.01;
+  mapScene.add(g);
+
+  if (!mapCam) mapCam = new THREE.PerspectiveCamera(46, innerWidth/innerHeight, 0.5, 600);
+  mapCam.aspect = innerWidth / innerHeight;
+  mapCam.updateProjectionMatrix();
+  updateMapCam();
 }
 
+function updateMapCam() {
+  if (!mapCam) return;
+  const t = mapCenter();
+  const cp = Math.cos(mapPitch), sp = Math.sin(mapPitch);
+  mapCam.position.set(
+    t.x + Math.sin(mapYaw) * cp * mapDist,
+    t.y + sp * mapDist,
+    t.z + Math.cos(mapYaw) * cp * mapDist);
+  mapCam.lookAt(t);
+}
+
+function openMap() {
+  if (document.pointerLockElement) document.exitPointerLock();
+  buildMap();
+  mapOpen = true;
+  document.getElementById('cut').classList.add('on');
+  document.getElementById('prompt').classList.remove('on');
+  mapSide();
+}
+function closeMap() {
+  mapOpen = false;
+  document.getElementById('cut').classList.remove('on');
+}
+
+function mapSide() {
+  const r = S.rooms[S.here];
+  const col = columnState(r.x, r.y, r.z);
+  document.getElementById('cutside').innerHTML =
+    '<h3>структура</h3>' +
+    '<div class="row"><span>отсеков</span><b>' + Object.keys(S.rooms).length + '</b></div>' +
+    '<div class="row"><span>ты в</span><b>' + r.card.id + '</b></div>' +
+    '<div class="row"><span>ярус</span><b>' + (r.y >= 0 ? '+' + r.y : r.y) + '</b></div>' +
+    '<div class="row"><span>архетип</span><b>' + ARCH[S.team[S.arch]].name + '</b></div>' +
+    '<div class="row"><span>над тобой</span><b>вода ' + col.water + ' · пит ' + col.power + ' · опора ' + col.support + '</b></div>' +
+    '<p class="maphint">тяни мышью — повернуть<br>колесо — приблизить<br>m — закрыть</p>' +
+    '<p class="maphint dim">клейма видны на южной грани отсеков</p>';
+}
 // ── sigils, and a cabinet that wants three of them ──────────────
 // The code is never written down: it is the three sigils of the compartments
-// stacked directly above this one. You find it by climbing and looking, which
-// is the only kind of clue this world can give.
+// stacked directly above this one. You find it by climbing and looking.
 const SIGTEX = [];
 function sigilCanvas(i) {
   const [c, x] = mkc(64, 64);
@@ -1384,8 +1443,6 @@ function tryCode() {
     r.cabOpen = true;
     closeCode();
     if (S.team.indexOf('VECTOR') < 0) {
-      // the first cabinet holds a qualia, not loot: a whole second archetype,
-      // its compartments, and the grapple that opens the shafts
       S.team.push('VECTOR');
       callout('КВАЛИА · АРХЕТИП «ВЕКТОР» · ТРОС И НОВЫЕ ОТСЕКИ');
     } else {
@@ -1408,12 +1465,20 @@ function tryLock() {
   const p = renderer.domElement.requestPointerLock();
   if (p && p.catch) p.catch(() => {});       // capture is a convenience, not a gate
 }
+let mapDrag = false;
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  if (mapOpen) { mapDrag = true; return; }
   dragging = true;
   tryLock();
 });
-addEventListener('mouseup', () => { dragging = false; });
+addEventListener('wheel', (e) => {
+  if (!mapOpen) return;
+  e.preventDefault();
+  mapDist = Math.max(14, Math.min(190, mapDist * (e.deltaY > 0 ? 1.1 : 0.9)));
+  updateMapCam();
+}, { passive: false });
+addEventListener('mouseup', () => { dragging = false; mapDrag = false; });
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
 document.addEventListener('pointerlockchange', () => {
@@ -1422,6 +1487,13 @@ document.addEventListener('pointerlockchange', () => {
 });
 
 document.addEventListener('mousemove', (e) => {
+  if (mapOpen) {
+    if (!mapDrag) return;
+    mapYaw -= (e.movementX || 0) * 0.006;
+    mapPitch = Math.max(-1.35, Math.min(1.35, mapPitch + (e.movementY || 0) * 0.005));
+    updateMapCam();
+    return;
+  }
   if (S.draft || S.cross || S.over) return;
   if (!locked && !dragging) return;          // drag-look when the capture is refused
   S.yaw -= (e.movementX || 0) * 0.0024;
@@ -1444,7 +1516,7 @@ addEventListener('keydown', (ev) => {
   }
 
   if (k === 'KeyM') { ev.preventDefault();
-    document.getElementById('cut').classList.contains('on') ? closeCut() : openCut(); return; }
+    document.getElementById('cut').classList.contains('on') ? closeMap() : openMap(); return; }
   if (k === 'Tab') {
     ev.preventDefault();
     if (S.team.length > 1) {
@@ -1455,7 +1527,7 @@ addEventListener('keydown', (ev) => {
     return;
   }
   if (k === 'KeyR') { newRun(); document.getElementById('end').classList.remove('on'); return; }
-  if (k === 'Escape') { if (S.draft) closeDraft(); else closeCut(); return; }
+  if (k === 'Escape') { if (S.draft) closeDraft(); else if (S.code) closeCode(); else closeMap(); return; }
   if (S.over) return;
   if (S.draft) {
     if (k === 'Digit1' || k === 'Digit2' || k === 'Digit3') {
@@ -1504,7 +1576,7 @@ addEventListener('keyup', (ev) => { keys[ev.code] = false; });
 document.getElementById('place').onclick = placeChosen;
 document.getElementById('cancel').onclick = closeDraft;
 document.getElementById('fab').onclick = () => {
-  document.getElementById('cut').classList.contains('on') ? closeCut() : openCut();
+  document.getElementById('cut').classList.contains('on') ? closeMap() : openMap();
 };
 document.getElementById('restart').onclick = () => {
   document.getElementById('end').classList.remove('on'); newRun();
@@ -1520,7 +1592,7 @@ function tick(now) {
   tickMove(dt);
   animDoors(dt);
   animCross(now);
-  renderer.render(scene, camera);
+  if (mapOpen) renderer.render(mapScene, mapCam); else renderer.render(scene, camera);
   if (now - hudT > 120) { hudT = now; if (!S.draft) hud(); }
   if (calloutT && now > calloutT) { calloutT = 0; document.getElementById('event').classList.remove('on'); }
 }
