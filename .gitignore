@@ -16,6 +16,10 @@ _trash*/
 # build scratch: the smoke test writes a throwaway page, a profile and a shot
 # into build/; none of it is source, and all of it changes on every run
 build/_*
+
+# the gdd is an Obsidian vault: the notes are the point, the per-window state
+# is not (it rewrites itself every time the vault is opened)
+gdd/.obsidian/workspace.json
 # sound: the heavy originals from the generators stay out, the .ogg that
 # datum_audio.py makes from them goes in — it is what the build bakes, it is a
 # few hundred kb, and nothing in sfx/ can be regenerated from scratch.
