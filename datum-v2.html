@@ -857,7 +857,10 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
     }
   }
   // the sealed cabinet stands in support compartments
-  if (t.type === 'опора' && r.cabLocal === undefined) {
+  // a cabinet is not standard furniture: roughly one support compartment in
+  // three carries one, decided by the cell itself so it can be learned
+  const cabHash = (((r.x*3 + r.y*5 + r.z*7) % 3) + 3) % 3;
+  if (t.type === 'опора' && cabHash === 0 && r.cabLocal === undefined) {
     const cw = 1.1, cd = 0.55, sp = wallSpot(cw, cd);
     boxInto(MT, cw, 1.5, cd, sp.x, 0.75, sp.z);
     boxInto(AM, cw - 0.32, 0.04, 0.05, sp.x, 1.06, sp.z + (sp.z > 0 ? -cd/2 : cd/2));
@@ -1187,11 +1190,15 @@ function hud() {
   document.getElementById('hazard').className = (nx - S.ticks) <= 5 ? 'on' : '';
 
   const col = columnState(r.x, r.y, r.z);
-  document.getElementById('crumbs').textContent =
+  // the room's own sigil sits in the readout, so the language of marks is
+  // learned just by walking: this is what a sigil is, and here is mine
+  document.getElementById('crumbs').innerHTML =
     ARCH[S.team[S.arch]].name + (hasGrapple() ? ' · трос' : '') + ' · мат ' + (S.mat||0) +
     ' · отсек ' + (r.card.id) + ' · ярус ' + (r.y >= 0 ? '+' + r.y : r.y) +
     ' · шлюзов ' + r.gates.length +
-    ' · над тобой вода ' + col.water + ' пит ' + col.power + ' опора ' + col.support;
+    ' · над тобой вода ' + col.water + ' пит ' + col.power + ' опора ' + col.support +
+    ' · клеймо <img src="' + SIGURL[sigilOf(r)] +
+    '" width="14" height="14" style="vertical-align:-3px;opacity:.9">';
 
   if (!S.draft) {
     const g = gateNear();
@@ -1281,10 +1288,12 @@ function buildMap() {
     edges.scale.set(k === S.here ? 1.03 : 1, k === S.here ? 1.06 : 1, k === S.here ? 1.03 : 1);
     mapScene.add(edges);
 
-    // the sigil sits on the south face: readable when you turn the structure
-    const sg = new THREE.Mesh(new THREE.PlaneGeometry(S0*0.52, S0*0.52),
-      new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true, opacity: 0.92 }));
-    sg.position.set(r.x*S0, r.y*H + H/2, r.z*S0 + S0*0.455);
+    // the sigil sits on the roof of the block: seen from above, the
+    // arrangement of marks is what you read, the way a plan is read
+    const sg = new THREE.Mesh(new THREE.PlaneGeometry(S0*0.6, S0*0.6),
+      new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true, opacity: 0.95 }));
+    sg.rotation.x = -Math.PI/2;
+    sg.position.set(r.x*S0, r.y*H + H/2 + H*0.42, r.z*S0);
     mapScene.add(sg);
 
     // where you are, as a pin
@@ -1341,16 +1350,19 @@ function mapSide() {
     '<div class="row"><span>архетип</span><b>' + ARCH[S.team[S.arch]].name + '</b></div>' +
     '<div class="row"><span>над тобой</span><b>вода ' + col.water + ' · пит ' + col.power + ' · опора ' + col.support + '</b></div>' +
     '<p class="maphint">тяни мышью — повернуть<br>колесо — приблизить<br>m — закрыть</p>' +
-    '<p class="maphint dim">клейма видны на южной грани отсеков</p>';
+    '<p class="maphint dim">клейма на крышах отсеков</p>';
 }
 // ── sigils, and a cabinet that wants three of them ──────────────
 // The code is never written down: it is the three sigils of the compartments
 // stacked directly above this one. You find it by climbing and looking.
+// Clue colour. Amber is structure and red is you, so a clue needs a third hue
+// of its own — cold cyan, the colour of a registry annotation, never of a wall.
+const SIG_COL = '#7fd4e8';
 const SIGTEX = [];
 function sigilCanvas(i) {
   const [c, x] = mkc(64, 64);
-  x.strokeStyle = '#e8a63c'; x.lineWidth = 3; x.lineCap = 'square';
-  x.shadowColor = '#e8a63c'; x.shadowBlur = 6;
+  x.strokeStyle = SIG_COL; x.lineWidth = 3; x.lineCap = 'square';
+  x.shadowColor = SIG_COL; x.shadowBlur = 7;
   const C0 = 32;
   if (i === 0) { x.beginPath(); x.arc(C0, C0, 16, 0, 6.2832); x.stroke();
                  x.beginPath(); x.moveTo(C0, 8); x.lineTo(C0, 56); x.stroke(); }
@@ -1370,6 +1382,7 @@ function sigilCanvas(i) {
   return tt;
 }
 for (let i = 0; i < 6; i++) SIGTEX.push(sigilCanvas(i));
+const SIGURL = SIGTEX.map(t => t.image.toDataURL());
 
 function sigilOf(r) { return ((r.x * 7 + r.y * 13 + r.z * 23) % 6 + 6) % 6; }
 
@@ -1378,13 +1391,20 @@ function addSigil(r) {
   const free = ['S','W','N','E'].filter(d => r.gates.indexOf(d) < 0);
   const d = free.length ? free[free.length - 1] : null;
   if (!d) return;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.85),
-    new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true, opacity: 0.9 }));
-  const y = 1.75;
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 1.35),
+    new THREE.MeshBasicMaterial({ color: 0x0b0c0e, transparent: true, opacity: 0.85 }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.15),
+    new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true }));
+  const y = 1.8;
   if (d === 'S') { m.position.set(r.x*C.size, r.y*C.height + y, r.z*C.size + HS - 0.03); m.rotation.y = Math.PI; }
   if (d === 'N') { m.position.set(r.x*C.size, r.y*C.height + y, r.z*C.size - HS + 0.03); }
   if (d === 'W') { m.position.set(r.x*C.size - HS + 0.03, r.y*C.height + y, r.z*C.size); m.rotation.y = Math.PI/2; }
   if (d === 'E') { m.position.set(r.x*C.size + HS - 0.03, r.y*C.height + y, r.z*C.size); m.rotation.y = -Math.PI/2; }
+  plate.position.copy(m.position); plate.rotation.copy(m.rotation);
+  const off = 0.01;
+  if (d === 'S') { plate.position.z -= off; } else if (d === 'N') { plate.position.z += off; }
+  else if (d === 'W') { plate.position.x += off; } else { plate.position.x -= off; }
+  world.add(plate);
   world.add(m);
 }
 
@@ -1425,8 +1445,10 @@ function paintCode() {
   document.getElementById('codebody').innerHTML =
     '<div class="slots">' + slots + '</div>' +
     '<div class="pal">' + pal + '</div>' +
-    '<div class="hint">три клейма · код — клейма отсеков над этим</div>' +
-    (need ? '' : '<div class="hint amber">над этим отсеком меньше трёх — кода нет, и шкаф не открыть</div>');
+    '<div class="hint">код — клейма трёх отсеков, что стоят над этим: сначала ближний, потом выше, потом верхний</div>' +
+    (need
+      ? '<div class="hint dim">клеймо отсека нарисовано на его стене · и на крыше отсека на карте (M)</div>'
+      : '<div class="hint amber">над этим отсеком меньше трёх — кода нет, и шкаф не открыть</div>');
   Array.prototype.forEach.call(document.querySelectorAll('#codebody .sig'), el => {
     el.onclick = () => {
       if (S.code.entered.length >= 3) S.code.entered = [];
