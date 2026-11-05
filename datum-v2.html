@@ -70,6 +70,13 @@
   #prompt.on { display:block; }
   #prompt b { color:#160f02; background:var(--amb); padding:2px 7px; margin-right:9px; }
 
+  /* ── event callout: the audit says what it took ─────────────── */
+  #event { position:fixed; left:50%; top:calc(50% - 118px); transform:translateX(-50%);
+    z-index:25; font-size:12px; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--red); background:rgba(8,9,11,.82); padding:8px 18px; opacity:0;
+    transition:opacity .3s linear; pointer-events:none; white-space:nowrap;
+    clip-path:polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%); }
+  #event.on { opacity:1; }
   /* ── pointer hint: a toast, never a blocker ──────────────────── */
   #lock { position:fixed; left:50%; bottom:70px; transform:translateX(-50%); z-index:22;
     font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
@@ -183,6 +190,7 @@
 
 <div id="cross"></div>
 <div id="prompt"></div>
+<div id="event"></div>
 
 <div id="hint">
   <b>wasd</b> идти · <b>мышь</b> смотреть · <b>e</b> шлюз · <b>m</b> разрез<br>
@@ -888,6 +896,9 @@ function promptFor(gate) {
   const v = GATES[gate.dir].v;
   const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
   const name = GATES[gate.dir].name;
+  if (r.sealed && r.sealed[gate.dir]) {
+    return { text: 'E · ' + name + ' · запечатано сверкой', mode: 'sealed' };
+  }
   const verb = gate.dir === 'DOWN' ? 'спуститься'
              : gate.dir === 'UP'   ? 'подняться' : 'пройти';
   const verb2 = gate.dir === 'DOWN' ? 'пробить шахту'
@@ -1035,16 +1046,53 @@ function transition(dir) {
 function nextSync() { return (Math.floor(S.ticks / C.syncEvery) + 1) * C.syncEvery; }
 
 function sync() {
-  // the audit does not stop you: it resets the floor's balance and closes
-  // any gate that leads to nothing, which is what a dead end looks like
-  flashSync();
+  // The audit is an event, not a counter reset. It takes a drafting option
+  // away: one gate in the compartment you are standing in gets capped, so the
+  // structure you were about to extend is closed to you. It never takes the
+  // last one — that would be a coin toss, and this world has no coin.
   const r = S.rooms[S.here];
-  let open = 0;
-  for (const d of r.gates) {
+  S.syncs = (S.syncs || 0) + 1;
+
+  const empty = r.gates.filter(d => {
     const v = GATES[d].v;
-    if (!S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])] || d === 'DOWN') open++;
+    return !S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])]
+        && !(r.sealed && r.sealed[d]);
+  });
+  let capped = null;
+  if (empty.length > 1) {
+    capped = empty[0];
+    r.sealed = r.sealed || {};
+    r.sealed[capped] = true;
   }
-  if (!open) finish('тупик', 'сверка застала тебя в отсеке без выхода.');
+
+  // water standing above you makes the audit worse: the compartment floods
+  const col = columnState(r.x, r.y, r.z);
+  let floodNote = false;
+  if (col.water >= 1 && !r.flood) { r.flood = true; floodNote = true; }
+
+  rebuild();
+  flashSync();
+  const msg = capped
+    ? 'СВЕРКА · шлюз ' + GATES[capped].name + ' запечатан' + (floodNote ? ' · отсек затоплен' : '')
+    : (floodNote ? 'СВЕРКА · отсек затоплен' : 'СВЕРКА · правки откатаны');
+  callout(msg);
+
+  const usable = r.gates.filter(d => {
+    const v = GATES[d].v;
+    return S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])]
+        || !(r.sealed && r.sealed[d]);
+  });
+  if (!usable.length) { finish('тупик', 'сверка запечатала последний шлюз.'); return; }
+  hud();
+}
+
+// a line of text that means something happened, gone in a couple of seconds
+let calloutT = 0;
+function callout(text) {
+  const el = document.getElementById('event');
+  el.textContent = text;
+  el.classList.add('on');
+  calloutT = performance.now() + 2600;
 }
 
 function flashSync() {
@@ -1226,6 +1274,7 @@ addEventListener('keydown', (ev) => {
     if (!g) { bump(); return; }
     const r = S.rooms[S.here];
     const v = GATES[g.dir].v;
+    if (r.sealed && r.sealed[g.dir]) { callout('ШЛЮЗ ' + GATES[g.dir].name.toUpperCase() + ' ЗАПЕЧАТАН СВЕРКОЙ'); return; }
     const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
     if (n) {
       // the leaves part first, then you cross
@@ -1261,6 +1310,7 @@ function tick(now) {
   animCross(now);
   renderer.render(scene, camera);
   if (now - hudT > 120) { hudT = now; if (!S.draft) hud(); }
+  if (calloutT && now > calloutT) { calloutT = 0; document.getElementById('event').classList.remove('on'); }
 }
 
 // the walk through the gate: the camera travels the doorway instead of being
