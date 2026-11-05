@@ -80,7 +80,10 @@ def main():
     if '</script>' in lib:
         sys.exit('three.min.js contains </script> — cannot inline safely')
 
-    # room art: one picture per room type, keyed by file name
+    # room art: one picture per room type, keyed by file name. The generator
+    # names files in latin, the game keys types in russian, so map them here.
+    ART_KEY = {'v2_passage': 'проход', 'v2_water': 'вода', 'v2_power': 'питание',
+               'v2_support': 'опора', 'v2_fight': 'бой', 'v2_hub': 'хаб'}
     art_script = ''
     roomdir = os.path.join(ROOT, 'assets', 'roomart')
     if os.path.isdir(roomdir):
@@ -93,8 +96,9 @@ def main():
             mime = {'.png': 'image/png', '.jpg': 'image/jpeg',
                     '.jpeg': 'image/jpeg', '.webp': 'image/webp'}[ext]
             data = base64.b64encode(open(os.path.join(roomdir, fn), 'rb').read()).decode('ascii')
-            arts[base] = 'data:%s;base64,%s' % (mime, data)
-            print('baked    %-28s %8.1f kb  (room art: %s)' % (fn, len(data) / 1024, base))
+            k = ART_KEY.get(base, base)
+            arts[k] = 'data:%s;base64,%s' % (mime, data)
+            print('baked    %-28s %8.1f kb  (room art: %s)' % (fn, len(data) / 1024, k))
         if arts:
             art_script = '<script>window.__ROOMART__=' + json.dumps(arts) + ';</script>\n'
         else:
