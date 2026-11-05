@@ -359,6 +359,7 @@ function newRun() {
     yaw: 0, pitch: 0,
     ticks: 0, placed: 0, mat: 0,
     team: ['BALLAST'], arch: 0,
+    passed: {},
     came: null,                      // the card of the room you are in
     draft: null,
     over: null,
@@ -1083,6 +1084,20 @@ function transition(dir) {
   if (!vertical) S.yaw = Math.atan2(v[0], v[2]) - Math.PI;
   S.pitch = 0;
   S.came = n.card;
+
+  // The wall you came through must be a door on this side too. It is not
+  // always: a compartment can be entered through a gate that was added on the
+  // far side, and then you arrive facing into a room whose wall behind you is
+  // solid — you turn around and there is nothing to go back through. Opening
+  // the reciprocal gate fixes both the view and the dead end.
+  const backDir = G.opp;
+  if (n.gates.indexOf(backDir) < 0) n.gates.push(backDir);
+
+  // remember which gates have actually been walked
+  S.passed = S.passed || {};
+  S.passed[key(here.x, here.y, here.z) + '|' + dir] = true;
+  S.passed[nk + '|' + backDir] = true;
+
   S.ticks += n.card.ticks;          // the turn is the gate-to-gate crossing
 
   // a skirmish resolves the moment you are inside: no second screen, no
@@ -1298,6 +1313,23 @@ function buildMap() {
     sg.rotation.x = -Math.PI/2;
     sg.position.set(r.x*S0, r.y*H + H/2 + H*0.42, r.z*S0);
     mapScene.add(sg);
+
+    // every gate this compartment has, marked on the face it sits in:
+    // green if you have walked through it, red if you have not
+    for (const d of r.gates) {
+      const walked = S.passed && S.passed[k + '|' + d];
+      const mk = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5),
+        new THREE.MeshBasicMaterial({ color: walked ? 0x63c47a : 0xc2402c,
+          transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+      const off = S0 * 0.47;
+      if (d === 'N') { mk.position.set(r.x*S0, r.y*H + H/2, r.z*S0 - off); }
+      if (d === 'S') { mk.position.set(r.x*S0, r.y*H + H/2, r.z*S0 + off); }
+      if (d === 'W') { mk.position.set(r.x*S0 - off, r.y*H + H/2, r.z*S0); mk.rotation.y = Math.PI/2; }
+      if (d === 'E') { mk.position.set(r.x*S0 + off, r.y*H + H/2, r.z*S0); mk.rotation.y = -Math.PI/2; }
+      if (d === 'UP')   { mk.position.set(r.x*S0, r.y*H + H*0.93, r.z*S0); mk.rotation.x = -Math.PI/2; }
+      if (d === 'DOWN') { mk.position.set(r.x*S0, r.y*H + H*0.07, r.z*S0); mk.rotation.x = Math.PI/2; }
+      mapScene.add(mk);
+    }
 
     // where you are, as a pin
     if (k === S.here) {
@@ -1533,6 +1565,7 @@ function mapInfo(r) {
       '<div class="row"><span>отсеков</span><b>' + Object.keys(S.rooms).length + '</b></div>' +
       '<div class="row"><span>архетип</span><b>' + ARCH[S.team[S.arch]].name + '</b></div>' +
       '<div class="row"><span>над тобой</span><b>вода ' + col.water + ' · пит ' + col.power + ' · опора ' + col.support + '</b></div>' +
+      '<p class="maphint"><span style="color:#63c47a">■</span> прошёл · <span style="color:#c2402c">■</span> ещё не ходил</p>' +
       '<p class="maphint">наведи на отсек — покажу, что в нём<br>клик — закрепить<br>тяни — повернуть · колесо — масштаб</p>';
     return;
   }
