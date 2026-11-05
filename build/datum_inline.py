@@ -20,6 +20,14 @@ if not os.path.exists(SRC):
 
 html = open(SRC, encoding='utf-8').read()
 
+# ── three.js: inline the renderer so the build is one file, no network ──
+# The source keeps the CDN tag (so datum-prototype.html still opens on its
+# own), but dist/ must not depend on cdnjs: 10 MB of art was already inlined
+# while the 600 kB that actually makes the thing run was still remote.
+THREE = os.path.join(HERE, 'build', 'vendor', 'three.min.js')
+CDN_TAG = ('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/'
+           'r128/three.min.js"></script>')
+
 # Stamp the build so a stale tab announces itself in its own title.
 stamp = '%s %s' % (time.strftime('%d.%m %H:%M'),
                    hashlib.sha1(html.encode('utf-8')).hexdigest()[:7])
@@ -27,6 +35,17 @@ if "const BUILD = 'dev';" not in html:
     sys.exit('BUILD marker missing from the source — put it back')
 html = html.replace("const BUILD = 'dev';", "const BUILD = '%s';" % stamp)
 print('build   %s' % stamp)
+
+if CDN_TAG not in html:
+    print('three   WARNING: CDN tag not found — dist will need the network')
+elif not os.path.exists(THREE):
+    print('three   vendor/three.min.js missing — dist will need the network')
+else:
+    lib = open(THREE, encoding='utf-8').read()
+    if '</script>' in lib:
+        sys.exit('three.min.js contains </script> — cannot inline safely')
+    html = html.replace(CDN_TAG, '<script>\n' + lib + '\n</script>')
+    print('baked %-28s %8.1f kb  (offline)' % ('three.min.js', len(lib) / 1024))
 
 for marker, fn in ASSETS.items():
     path = os.path.join(HERE, 'assets', fn)

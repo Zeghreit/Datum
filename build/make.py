@@ -4,7 +4,7 @@ The old loop was: edit a copy, hand it over, download, place, bake. Now the
 source lives on disk and is edited in place, so this is the only step left.
 Run it after every engine change.
 
-    py E:\\ClaudeFiles\\Datum\\build\\make.py
+    py build\\make.py
 """
 import os, re, subprocess, sys, hashlib, shutil
 

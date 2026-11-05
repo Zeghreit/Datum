@@ -5,7 +5,7 @@ only cheap if it is fast: one page, every candidate for every key, keyboard
 driven, and a line of text at the end that tells the cutter what won.
 
     py build\\datum_audition.py
-    start E:\\ClaudeFiles\\Datum\\sfx\\_raw\\audition.html
+    start sfx\\_raw\\audition.html
 
 J and K move through the list, Space plays, Enter picks. The bar at the bottom
 says how many keys are still undecided. "Скопировать выбор" puts the whole

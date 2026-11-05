@@ -12,6 +12,10 @@ _pv_*.png
 _ct_*.png
 _dg_*.png
 _trash*/
+
+# build scratch: the smoke test writes a throwaway page, a profile and a shot
+# into build/; none of it is source, and all of it changes on every run
+build/_*
 # sound: the heavy originals from the generators stay out, the .ogg that
 # datum_audio.py makes from them goes in — it is what the build bakes, it is a
 # few hundred kb, and nothing in sfx/ can be regenerated from scratch.

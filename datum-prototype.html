@@ -187,9 +187,11 @@
 
   /* ── key hints ─────────────────────────────────────────────── */
   /* the party panel grew a skill row, so the hints have to stay out of its way */
+  /* the last line is a dev hint, not a control; it used to sit so close to
+     the plate edge that it read as a clipping bug */
   #keys { position:fixed; bottom:16px; left:18px; color:var(--dim); font-size:13px;
     line-height:1.7; font-family:inherit; user-select:none; letter-spacing:.02em;
-    background:var(--plate); border:1px solid var(--line2); padding:8px 14px 8px 11px;
+    background:var(--plate); border:1px solid var(--line2); padding:8px 14px 11px 11px;
     border-left:2px solid var(--line);
     clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); }
   #keys b { color:var(--mid); font-weight:500; }
@@ -234,7 +236,9 @@
   #bootbox { width:min(1120px,88vw); font-size:34px; line-height:1.9; color:#6e7178;
     letter-spacing:.05em; }
   #bootbox .ln { opacity:0; animation:bootin .5s linear forwards; }
-  #bootbox i { font-style:normal; color:#3c3f44; display:inline-block; width:min(480px,42vw);
+  /* labels stay a step below the values — that hierarchy is deliberate — but
+     #3c3f44 on black was below any readable contrast */
+  #bootbox i { font-style:normal; color:#5a5e64; display:inline-block; width:min(480px,42vw);
     letter-spacing:.10em; }
   #bootbox b { color:var(--amb); font-weight:500; }
   #bootbox .d { color:var(--mid); }
@@ -344,7 +348,7 @@
   <b>WASD</b> step &nbsp; <b>QE</b> turn, free &nbsp; <b>SPACE</b> all strike<br>
   <b>1-4</b> select, free &nbsp; <b>F R</b> abilities &nbsp; <b>X</b> hold<br>
   <b>ENTER</b> print &nbsp; <b>C</b> status &nbsp; <b>ESC</b> shells &nbsp; <b>M</b> map<br>
-  <span style="color:#33332f">G reseed · TAB zone · H debug · drop a PNG</span>
+  <span style="color:#4b4e55">G reseed · TAB zone · H debug · drop a PNG</span>
 </div>
 <div id="boss"></div>
 <div id="fade"></div>
@@ -3957,7 +3961,11 @@ function drawMini() {
 
   for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
     const c = grid[y][x];
-    if (!known(x,y)) continue;
+    // Unknown cells are drawn as a dark lattice instead of being skipped.
+    // Skipping left an empty black plate in the corner for the whole first
+    // minute of a run, which read as a broken widget rather than as fog.
+    if (!known(x,y)) { mctx.fillStyle = '#111215';
+                       mctx.fillRect(ox+x*s+1, oy+y*s+1, s-1, s-1); continue; }
     const near = lit(x,y);
     if (c === '#') mctx.fillStyle = near ? '#2e2e26' : '#1c1c17';
     else if (WALK.has(c)) mctx.fillStyle = near ? '#4d4d45' : '#2c2c27';

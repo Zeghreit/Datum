@@ -1,42 +1,145 @@
-"""Smoke-test the party panel: start a run, fire abilities, screenshot the HUD."""
-from playwright.sync_api import sync_playwright
+"""Open the built game in a real browser and report what actually happened.
 
-URL = "file:///E:/ClaudeFiles/Datum/dist/DATUM.html"
-SHOT = r"E:\ClaudeFiles\Datum\build\_ui.png"
+This replaces the old party-panel smoke test, which was pinned to a path that
+no longer exists and drove a CDP browser that is not always running. It now
+launches its own headless Chrome, so the only requirement is Chrome itself.
 
-with sync_playwright() as p:
-    br = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
-    pg = br.contexts[0].new_page()
-    pg.set_viewport_size({"width": 1280, "height": 760})
-    errs = []
-    pg.on("console", lambda m: errs.append(m.type + ": " + m.text[:160])
-          if m.type in ("error", "warning") else None)
-    pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)[:250]))
+    py build\\datum_smoke.py
 
-    pg.goto(URL, wait_until="load", timeout=120000)
-    pg.wait_for_timeout(1500)
-    pg.mouse.click(640, 400)                       # end the teletype
-    pg.wait_for_timeout(1200)
-    # skip the shell menu — this is a mechanics check, not a menu check
-    print("gate", pg.evaluate(
-        "() => { try { if (typeof endBoot === 'function') endBoot(); } catch (e) {}"
-        " try { menuOpen = false; } catch (e) {}"
-        " try { resetBodies(); } catch (e) {}"
-        " const m = document.getElementById('menu'); if (m) m.style.display = 'none';"
-        " return { boot: !!bootEl, menu: menuOpen, alive: alive() }; }"))
-    pg.wait_for_timeout(600)
+It prints one line of facts -- three.js revision, zone size, shells, enemies,
+console errors -- and writes build/_ui.png so the HUD can be looked at. Exit
+code is 1 when the page threw, when three.js did not arrive, or when the maze
+did not come up: that is a build that should not be handed to anyone.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 
-    for key in ["Digit2", "KeyF", "Space", "KeyQ", "Digit1", "KeyF",
-                "Digit3", "KeyR", "Digit4", "KeyF", "KeyF"]:
-        pg.keyboard.press(key)
-        pg.wait_for_timeout(450)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DIST = os.path.join(ROOT, 'dist', 'DATUM.html')
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROBE = os.path.join(HERE, '_smoke.html')
+SHOT = os.path.join(HERE, '_ui.png')
 
-    pg.wait_for_timeout(900)
-    print(pg.evaluate(
-        "() => bodies.map(b => b.k + ' hp' + Math.round(b.hp) +"
-        " ' cd' + b.cd.join('/') + ' sh' + b.shield + ' dg' + b.dodge).join(' | ')"))
-    print("tick", pg.evaluate("() => tickNo"))
-    pg.screenshot(path=SHOT, clip={"x": 380, "y": 480, "width": 560, "height": 280})
-    for e in errs[:10]:
-        print("  ", e)
-    pg.close()
+CHROME = [
+    r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+    r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+    os.path.expanduser(r'~\AppData\Local\Google\Chrome\Application\chrome.exe'),
+    r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+]
+
+# Runs after the page's own script. Never edits the source: it is appended to
+# a throwaway copy in build/, so the shipped dist keeps its prologue.
+INJECT = """
+<script>
+window.__errs = [];
+window.addEventListener('error', function (e) { window.__errs.push(e.message); });
+function K(code) { window.dispatchEvent(new KeyboardEvent('keydown', {code: code, key: code, bubbles: true})); }
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    try { if (typeof endBoot === 'function') endBoot(); } catch (e) {}
+    try { menuOpen = false; var m = document.getElementById('menu'); if (m) m.style.display = 'none'; } catch (e) {}
+    var steps = [function(){K('KeyW');}, function(){K('KeyW');}, function(){K('KeyC');}];
+    var i = 0;
+    (function next() {
+      if (i < steps.length) { try { steps[i++](); } catch (e) { window.__errs.push('act ' + e.message); } setTimeout(next, 400); }
+      else setTimeout(function () {
+        try {
+          document.title = 'PROBE' + JSON.stringify({
+            errs: window.__errs,
+            three: (typeof THREE !== 'undefined') ? THREE.REVISION : null,
+            zone: (typeof Z !== 'undefined' && Z) ? [Z.name, Z.w, Z.h, Z.tile] : null,
+            pos: (typeof P !== 'undefined') ? [P.x, P.y] : null,
+            tick: (typeof tickNo !== 'undefined') ? tickNo : null,
+            seen: (typeof seen !== 'undefined' && seen) ? seen.size : null,
+            status: (typeof statusOpen !== 'undefined') ? statusOpen : null,
+            bodies: (typeof bodies !== 'undefined') ? bodies.map(function (b) { return b.k + ':' + Math.round(b.hp); }) : null,
+            enemies: (typeof enemies !== 'undefined') ? enemies.filter(function (e) { return e.hp > 0; }).length : null
+          });
+        } catch (e) { document.title = 'PROBEFAIL ' + e; }
+      }, 1500);
+    })();
+  }, 2500);
+});
+</script>
+"""
+
+
+def chrome():
+    for c in CHROME:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+def main():
+    if not os.path.exists(DIST):
+        sys.exit('dist/DATUM.html not found — run build/make.py first')
+    exe = chrome()
+    if not exe:
+        print('skip: no Chrome or Edge found')
+        return
+
+    html = open(DIST, encoding='utf-8').read()
+    open(PROBE, 'w', encoding='utf-8').write(html.replace('</body>', INJECT + '</body>', 1))
+
+    # A stale TEMP breaks Chrome's profile and python's tempfile alike; give
+    # the run a directory we know exists.
+    prof = os.path.join(HERE, '_smoke_profile')
+    env = dict(os.environ)
+    for k in ('TEMP', 'TMP'):
+        if k in env and not os.path.isdir(env[k]):
+            env[k] = tempfile.gettempdir() if _temp_ok() else HERE
+
+    url = 'file:///' + PROBE.replace('\\', '/')
+    try:
+        r = subprocess.run([exe, '--headless=new', '--disable-gpu', '--no-sandbox',
+                            '--user-data-dir=' + prof, '--window-size=1280,800',
+                            '--virtual-time-budget=25000', '--screenshot=' + SHOT,
+                            '--dump-dom', url],
+                           capture_output=True, text=True, timeout=180, env=env)
+    except subprocess.TimeoutExpired:
+        sys.exit('FAIL: the page did not settle in 180 s')
+
+    dom = r.stdout
+    m = re.search(r'<title>(PROBE|PROBEFAIL)(.*?)</title>', dom, re.S)
+    if not m:
+        print('FAIL: the probe never reported — the page did not finish loading')
+        print(dom[:400])
+        sys.exit(1)
+    if m.group(1) == 'PROBEFAIL':
+        sys.exit('FAIL: probe threw: ' + m.group(2).strip())
+
+    d = json.loads(m.group(2))
+    print('three   %s' % (d['three'] or 'MISSING'))
+    print('zone    %s %sx%s tile %sm' % tuple(d['zone']) if d['zone'] else 'zone    none')
+    print('walked  %s -> pos %s, tick %s, seen %s' % (d['bodies'][0] if d['bodies'] else '?',
+                                                      d['pos'], d['tick'], d['seen']))
+    print('shells  %s' % ', '.join(d['bodies'] or []))
+    print('enemies %s alive' % d['enemies'])
+    print('screen  status=%s   shot: %s' % (d['status'], SHOT))
+    if d['errs']:
+        print('errors  %d' % len(d['errs']))
+        for e in d['errs'][:8]:
+            print('   !', e[:200])
+        sys.exit(1)
+    if not d['three']:
+        sys.exit('FAIL: three.js did not load — dist is not self-contained')
+    if not d['zone']:
+        sys.exit('FAIL: no zone was built')
+    print('ok')
+
+
+def _temp_ok():
+    try:
+        tempfile.gettempdir()
+        return True
+    except Exception:
+        return False
+
+
+if __name__ == '__main__':
+    main()
