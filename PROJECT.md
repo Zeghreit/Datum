@@ -24,19 +24,21 @@
 
 ## Структура
 
-- `datum-prototype.html` — исходник прототипа.
-- `build/make.py` — сборка; `dist/DATUM.html` — результат.
+- `datum-prototype.html` — прототип v1 (старое ядро: лабиринт, четыре оболочки, бой). Стенд ощущения.
+- `datum-v2.html` — **прототип v2**: шахта 3×3×12, драфт комнат, такты, сверка, разрез. Новое ядро.
+- `build/make.py` → `dist/DATUM.html`; `build/make_v2.py` → `dist/DATUM-v2.html`.
 - `gdd/` — дизайн v2 (Obsidian-хранилище; в хранилище ShortGames виден как папка `DATUM`).
-- `docs/` — handover, звук, дизайн v1.
+- `docs/` — handover, звук, дизайн v1 (устарел).
 
 ## Запуск
 
 ```
-py build\make.py
+py build\make.py       # v1  -> dist/DATUM.html
+py build\make_v2.py    # v2  -> dist/DATUM-v2.html
 py build\datum_smoke.py
 ```
 
-Затем открыть `dist/DATUM.html` в браузере.
+Затем открыть собранный файл в браузере.
 
 ## Статус
 

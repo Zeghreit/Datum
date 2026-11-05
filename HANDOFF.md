@@ -12,10 +12,11 @@
 2. **Быт закрыт:** three.js вшивается из `build/vendor/`; `build/datum_smoke.py` переписан (свой headless Chrome, код возврата 1 при провале); мёртвые пути починены; три косметики UI; `gdd/`, `PROJECT.md`, `AGENTS.md`, `STATE.md`, `HANDOFF.md` в git; запушено.
 3. **Гейт 4 закрыт документами:** решения по вопросам 23–26 записаны, написаны `gdd/loops.md` и `gdd/progression.md`.
 4. **Эпик E1 начат:** `gdd/paper/datum-draft-paper.html` — бумажный кит драфта.
+5. **Каркас v2 собран:** `datum-v2.html` → `py build\make_v2.py` → `dist/DATUM-v2.html`. Драфт строит уровень, по которому ходишь; такты, сверка, разрез. UI — по Kubik.
 
 ## Состояние
 
-Читать `STATE.md`, затем `gdd/datum-gates.md`. Код: `datum-prototype.html` → `py build\make.py` → `py build\datum_smoke.py`.
+Читать `STATE.md`, затем `gdd/datum-gates.md`. Код: `datum-v2.html` → `py build\make_v2.py`; v1 остаётся стендом (`py build\make.py`).
 
 ## Следующий шаг
 
