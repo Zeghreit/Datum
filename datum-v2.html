@@ -149,6 +149,24 @@
     color:var(--dim); font-size:20px; cursor:pointer; }
   #draftfoot { font-size:10px; letter-spacing:.16em; color:var(--dim2); text-transform:uppercase; }
 
+  /* ── the sealed cabinet ──────────────────────────────────────── */
+  #code { position:fixed; inset:0; z-index:31; display:none; align-items:center;
+    justify-content:center; flex-direction:column; gap:18px; background:rgba(4,5,6,.78);
+    padding:24px; }
+  #code.on { display:flex; }
+  #code h2 { font-size:20px; font-weight:700; letter-spacing:.22em; text-transform:uppercase; }
+  #codebody { display:flex; flex-direction:column; align-items:center; gap:16px; }
+  #codebody .slots { display:flex; gap:12px; }
+  #codebody .slot { width:78px; height:78px; border:1px solid var(--line2); background:#0e1013;
+    display:flex; align-items:center; justify-content:center; }
+  #codebody .slot img { width:58px; height:58px; }
+  #codebody .pal { display:flex; gap:10px; }
+  #codebody .sig { width:64px; height:64px; border:1px solid var(--line2); background:#121417;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  #codebody .sig:hover { border-color:var(--amb); }
+  #codebody .sig img { width:44px; height:44px; }
+  #codebody .hint { font-size:10px; letter-spacing:.16em; color:var(--dim2); text-transform:uppercase; }
+  #codebody .hint.amber { color:var(--amb); }
   /* ── cut view ────────────────────────────────────────────────── */
   #cut { position:fixed; inset:0; z-index:40; background:rgba(6,7,8,.97); display:none;
          padding:64px 26px 26px; }
@@ -216,6 +234,10 @@
   <div id="draftfoot">клик — выбрать · enter — поставить · esc — отмена</div>
 </div>
 
+<div id="code">
+  <h2>опечатанный шкаф</h2>
+  <div id="codebody"></div>
+</div>
 <div id="cut">
   <div id="cutc"><canvas id="cutcanvas"></canvas></div>
   <div id="cutside"></div>
@@ -326,7 +348,7 @@ function newRun() {
     here: '0,0,0',
     pos: { x: 0, z: 0 },             // local metres, origin = room centre
     yaw: 0, pitch: 0,
-    ticks: 0, placed: 0,
+    ticks: 0, placed: 0, mat: 0,
     came: null,                      // the card of the room you are in
     draft: null,
     over: null,
@@ -587,6 +609,7 @@ function rebuild() {
   // doors are separate objects, not merged: a leaf has to move
   doors = [];
   for (const r of list) for (const d of r.gates) doors.push(mkDoor(r, d));
+  for (const r of list) addSigil(r);
 
   placeCamera();
 }
@@ -792,6 +815,11 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       boxInto(MT, 0.55, H, 0.55, sx*(HS - 0.6), H/2, sz*(HS - 0.6));
     }
+    const cw = 1.1, cd = 0.55, sp = wallSpot(cw, cd);
+    boxInto(MT, cw, 1.5, cd, sp.x, 0.75, sp.z);
+    boxInto(AM, cw - 0.32, 0.04, 0.05, sp.x, 1.06, sp.z + (sp.z > 0 ? -cd/2 : cd/2));
+    r.cabLocal = { x: sp.x, z: sp.z };
+    take(sp.x, sp.z, cw, cd);
   } else if (t.type === 'бой') {
     // debris: seeded, but rejected when it lands in a doorway or on you
     const R = mulberry32(r.x*31 + r.y*17 + r.z*7 + 5);
@@ -805,6 +833,11 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
       take(x, z, w, d);
       n++;
     }
+    const cw = 1.1, cd = 0.55, sp = wallSpot(cw, cd);
+    boxInto(MT, cw, 1.5, cd, sp.x, 0.75, sp.z);
+    boxInto(AM, cw - 0.32, 0.04, 0.05, sp.x, 1.06, sp.z + (sp.z > 0 ? -cd/2 : cd/2));
+    r.cabLocal = { x: sp.x, z: sp.z };
+    take(sp.x, sp.z, cw, cd);
   } else {
     // проход: a rail along the ceiling and a lamp in the middle
     boxInto(MT, 0.2, 0.2, I - 1.4, 0, H - 0.45, 0);
@@ -1131,6 +1164,10 @@ function hud() {
       el.innerHTML = '<b>' + p.text.slice(0,1) + '</b>' + p.text.slice(3);
       el.classList.add('on');
       cross.classList.add('hot');
+    } else if (nearCabinet()) {
+      el.innerHTML = '<b>E</b> · опечатанный шкаф';
+      el.classList.add('on');
+      cross.classList.add('hot');
     } else {
       el.classList.remove('on');
       cross.classList.remove('hot');
@@ -1211,6 +1248,115 @@ function drawCut() {
   }
 }
 
+// ── sigils, and a cabinet that wants three of them ──────────────
+// The code is never written down: it is the three sigils of the compartments
+// stacked directly above this one. You find it by climbing and looking, which
+// is the only kind of clue this world can give.
+const SIGTEX = [];
+function sigilCanvas(i) {
+  const [c, x] = mkc(64, 64);
+  x.strokeStyle = '#e8a63c'; x.lineWidth = 3; x.lineCap = 'square';
+  x.shadowColor = '#e8a63c'; x.shadowBlur = 6;
+  const C0 = 32;
+  if (i === 0) { x.beginPath(); x.arc(C0, C0, 16, 0, 6.2832); x.stroke();
+                 x.beginPath(); x.moveTo(C0, 8); x.lineTo(C0, 56); x.stroke(); }
+  if (i === 1) { x.beginPath(); x.moveTo(C0, 10); x.lineTo(52, 50); x.lineTo(12, 50); x.closePath(); x.stroke();
+                 x.beginPath(); x.arc(C0, 38, 3, 0, 6.2832); x.stroke(); }
+  if (i === 2) { x.beginPath(); x.moveTo(14, 18); x.lineTo(50, 46); x.stroke();
+                 x.beginPath(); x.moveTo(50, 18); x.lineTo(14, 46); x.stroke();
+                 x.beginPath(); x.arc(C0, C0, 20, 0, 6.2832); x.stroke(); }
+  if (i === 3) { for (let k = 0; k < 3; k++) { const y = 16 + k * 14;
+                   x.beginPath(); x.moveTo(14, y); x.lineTo(C0, y + 8); x.lineTo(50, y); x.stroke(); } }
+  if (i === 4) { x.beginPath(); x.rect(12, 12, 40, 40); x.stroke();
+                 x.beginPath(); x.moveTo(12, 52); x.lineTo(52, 12); x.stroke(); }
+  if (i === 5) { x.beginPath(); x.moveTo(18, 48); x.lineTo(18, 26); x.lineTo(40, 26);
+                 x.lineTo(40, 40); x.lineTo(28, 40); x.stroke(); }
+  const tt = new THREE.CanvasTexture(c);
+  tt.magFilter = THREE.NearestFilter; tt.minFilter = THREE.NearestFilter;
+  return tt;
+}
+for (let i = 0; i < 6; i++) SIGTEX.push(sigilCanvas(i));
+
+function sigilOf(r) { return ((r.x * 7 + r.y * 13 + r.z * 23) % 6 + 6) % 6; }
+
+function addSigil(r) {
+  const HS = C.inner/2;
+  const free = ['S','W','N','E'].filter(d => r.gates.indexOf(d) < 0);
+  const d = free.length ? free[free.length - 1] : null;
+  if (!d) return;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.85),
+    new THREE.MeshBasicMaterial({ map: SIGTEX[sigilOf(r)], transparent: true, opacity: 0.9 }));
+  const y = 1.75;
+  if (d === 'S') { m.position.set(r.x*C.size, r.y*C.height + y, r.z*C.size + HS - 0.03); m.rotation.y = Math.PI; }
+  if (d === 'N') { m.position.set(r.x*C.size, r.y*C.height + y, r.z*C.size - HS + 0.03); }
+  if (d === 'W') { m.position.set(r.x*C.size - HS + 0.03, r.y*C.height + y, r.z*C.size); m.rotation.y = Math.PI/2; }
+  if (d === 'E') { m.position.set(r.x*C.size + HS - 0.03, r.y*C.height + y, r.z*C.size); m.rotation.y = -Math.PI/2; }
+  world.add(m);
+}
+
+function codeFor(r) {
+  const a = S.rooms[key(r.x, r.y + 1, r.z)];
+  const b = S.rooms[key(r.x, r.y + 2, r.z)];
+  const c = S.rooms[key(r.x, r.y + 3, r.z)];
+  if (!a || !b || !c) return null;
+  return [sigilOf(a), sigilOf(b), sigilOf(c)];
+}
+
+function nearCabinet() {
+  const r = S.rooms[S.here];
+  if (!r.cabLocal || r.cabOpen) return null;
+  const dx = S.pos.x - r.cabLocal.x, dz = S.pos.z - r.cabLocal.z;
+  return Math.hypot(dx, dz) < 2.4 ? r : null;
+}
+
+function openCode(r) {
+  S.code = { room: r, entered: [] };
+  paintCode();
+  document.getElementById('code').classList.add('on');
+  document.getElementById('prompt').classList.remove('on');
+}
+function closeCode() {
+  S.code = null;
+  document.getElementById('code').classList.remove('on');
+}
+function paintCode() {
+  const need = codeFor(S.code.room);
+  const slots = [0,1,2].map(i => {
+    const v = S.code.entered[i];
+    return '<div class="slot">' + (v === undefined ? '' :
+      '<img src="' + SIGTEX[v].image.toDataURL() + '">') + '</div>';
+  }).join('');
+  const pal = SIGTEX.map((t, i) =>
+    '<button class="sig" data-i="' + i + '"><img src="' + t.image.toDataURL() + '"></button>').join('');
+  document.getElementById('codebody').innerHTML =
+    '<div class="slots">' + slots + '</div>' +
+    '<div class="pal">' + pal + '</div>' +
+    '<div class="hint">три клейма · код — клейма отсеков над этим</div>' +
+    (need ? '' : '<div class="hint amber">над этим отсеком меньше трёх — кода нет, и шкаф не открыть</div>');
+  Array.prototype.forEach.call(document.querySelectorAll('#codebody .sig'), el => {
+    el.onclick = () => {
+      if (S.code.entered.length >= 3) S.code.entered = [];
+      S.code.entered.push(+el.dataset.i);
+      paintCode();
+      if (S.code.entered.length === 3) setTimeout(tryCode, 220);
+    };
+  });
+}
+function tryCode() {
+  const r = S.code.room, need = codeFor(r);
+  const got = S.code.entered;
+  if (need && got.length === 3 && got[0] === need[0] && got[1] === need[1] && got[2] === need[2]) {
+    r.cabOpen = true;
+    S.mat = (S.mat || 0) + 3;
+    closeCode();
+    callout('ШКАФ ОТКРЫТ · МАТЕРИАЛ +3');
+    hud();
+  } else {
+    S.code.entered = [];
+    paintCode();
+    callout('НЕ ПОДХОДИТ');
+  }
+}
 // ── input ───────────────────────────────────────────────────────
 let locked = false, dragging = false;
 const lockEl = document.getElementById('lock');
@@ -1267,9 +1413,21 @@ addEventListener('keydown', (ev) => {
     if (k === 'Enter' || k === 'Space') { ev.preventDefault(); placeChosen(); return; }
     return;
   }
+  if (S.code) {
+    if (k === 'Escape') { closeCode(); return; }
+    if (/^Digit[1-6]$/.test(k)) {
+      if (S.code.entered.length >= 3) S.code.entered = [];
+      S.code.entered.push(+k.slice(5) - 1);
+      paintCode();
+      if (S.code.entered.length === 3) setTimeout(tryCode, 220);
+    }
+    return;
+  }
   if (k === 'KeyE' || k === 'Enter') {
     ev.preventDefault();
     if (S.cross) return;
+    const cab = nearCabinet();
+    if (cab) { openCode(cab); return; }
     const g = gateNear();
     if (!g) { bump(); return; }
     const r = S.rooms[S.here];
