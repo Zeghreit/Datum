@@ -1271,6 +1271,7 @@ function buildMap() {
   d.position.set(1, 2.2, 1.4);
   mapScene.add(d);
 
+  mapBlocks = [];
   const S0 = C.size, H = C.height;
   const geo = new THREE.BoxGeometry(S0*0.9, H*0.82, S0*0.9);
   const edgeGeo = new THREE.EdgesGeometry(geo);
@@ -1279,8 +1280,10 @@ function buildMap() {
     const r = S.rooms[k];
     const col = MAP_COL[r.card.type] !== undefined ? MAP_COL[r.card.type] : 0x2a2d32;
     const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: col }));
+    m.userData.room = r;
     m.position.set(r.x*S0, r.y*H + H/2, r.z*S0);
     mapScene.add(m);
+    mapBlocks.push(m);
 
     const edges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({
       color: k === S.here ? 0xe8a63c : 0x1a1d21 }));
@@ -1332,7 +1335,7 @@ function openMap() {
   mapOpen = true;
   document.getElementById('cut').classList.add('on');
   document.getElementById('prompt').classList.remove('on');
-  mapSide();
+  mapSel = null; mapHover = null; mapHighlight(null); mapInfo(null);
 }
 function closeMap() {
   mapOpen = false;
@@ -1478,6 +1481,84 @@ function tryCode() {
     callout('НЕ ПОДХОДИТ');
   }
 }
+// ── pointing at the map ─────────────────────────────────────────
+// A block you can point at is a block you can ask about. Hover marks it and
+// fills the panel; a click pins it, so the answer stays while you turn the
+// structure to look at something else.
+let mapBlocks = [];
+const mapRay = new THREE.Raycaster();
+const mapPtr = new THREE.Vector2();
+let mapHi = null, mapHover = null, mapSel = null, mapDown = null;
+
+function mapPick(clientX, clientY) {
+  if (!mapScene || !mapCam || !mapBlocks.length) return null;
+  mapPtr.x = (clientX / innerWidth) * 2 - 1;
+  mapPtr.y = -(clientY / innerHeight) * 2 + 1;
+  mapRay.setFromCamera(mapPtr, mapCam);
+  const hits = mapRay.intersectObjects(mapBlocks, false);
+  return hits.length ? hits[0].object.userData.room : null;
+}
+
+function mapHighlight(r) {
+  if (!mapHi) {
+    mapHi = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(C.size*0.95, C.height*0.87, C.size*0.95)),
+      new THREE.LineBasicMaterial({ color: 0x7fd4e8 }));
+    mapScene.add(mapHi);
+  }
+  if (!r) { mapHi.visible = false; return; }
+  mapHi.visible = true;
+  mapHi.position.set(r.x*C.size, r.y*C.height + C.height/2, r.z*C.size);
+}
+
+function gateList(r) {
+  const out = [];
+  for (const d of r.gates) {
+    const v = GATES[d].v;
+    const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
+    const sealed = r.sealed && r.sealed[d];
+    out.push('<div class="row"><span>' + GATES[d].name + '</span><b>' +
+      (sealed ? 'запечатан' : (n ? n.card.id : 'пусто')) + '</b></div>');
+  }
+  return out.join('');
+}
+
+function mapInfo(r) {
+  const box = document.getElementById('cutside');
+  if (!r) {
+    const here = S.rooms[S.here];
+    const col = columnState(here.x, here.y, here.z);
+    box.innerHTML =
+      '<h3>структура</h3>' +
+      '<div class="row"><span>отсеков</span><b>' + Object.keys(S.rooms).length + '</b></div>' +
+      '<div class="row"><span>архетип</span><b>' + ARCH[S.team[S.arch]].name + '</b></div>' +
+      '<div class="row"><span>над тобой</span><b>вода ' + col.water + ' · пит ' + col.power + ' · опора ' + col.support + '</b></div>' +
+      '<p class="maphint">наведи на отсек — покажу, что в нём<br>клик — закрепить<br>тяни — повернуть · колесо — масштаб</p>';
+    return;
+  }
+  const col = columnState(r.x, r.y, r.z);
+  const isHere = key(r.x, r.y, r.z) === S.here;
+  box.innerHTML =
+    '<h3>отсек ' + r.card.id + '</h3>' +
+    '<div class="row"><span>тип</span><b>' + r.card.type + '</b></div>' +
+    '<div class="row"><span>ярус</span><b>' + (r.y >= 0 ? '+' + r.y : r.y) + '</b></div>' +
+    '<div class="row"><span>клеймо</span><b><img src="' + SIGURL[sigilOf(r)] + '" width="16" height="16" style="vertical-align:-4px"></b></div>' +
+    '<div class="row"><span>стычка</span><b>' + (r.fight ? (r.fought ? 'была' : 'ждёт') : 'тихо') + '</b></div>' +
+    (r.cabLocal ? '<div class="row"><span>шкаф</span><b>' + (r.cabOpen ? 'вскрыт' : 'опечатан') + '</b></div>' : '') +
+    (isHere ? '<div class="row"><span>ты</span><b>здесь</b></div>' : '') +
+    '<h3 style="margin-top:14px">шлюзы</h3>' + gateList(r) +
+    '<h3 style="margin-top:14px">над ним</h3>' +
+    '<div class="row"><span>вода</span><b>' + col.water + '</b></div>' +
+    '<div class="row"><span>питание</span><b>' + col.power + '</b></div>' +
+    '<div class="row"><span>опора</span><b>' + col.support + '</b></div>';
+}
+
+function mapPoint(clientX, clientY) {
+  const r = mapPick(clientX, clientY);
+  mapHover = r;
+  mapHighlight(r || mapSel);
+  mapInfo(r || mapSel);
+}
 // ── input ───────────────────────────────────────────────────────
 let locked = false, dragging = false;
 const lockEl = document.getElementById('lock');
@@ -1490,7 +1571,7 @@ function tryLock() {
 let mapDrag = false;
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
-  if (mapOpen) { mapDrag = true; return; }
+  if (mapOpen) { mapDrag = true; mapDown = { x: e.clientX, y: e.clientY, moved: false }; return; }
   dragging = true;
   tryLock();
 });
@@ -1500,7 +1581,19 @@ addEventListener('wheel', (e) => {
   mapDist = Math.max(14, Math.min(190, mapDist * (e.deltaY > 0 ? 1.1 : 0.9)));
   updateMapCam();
 }, { passive: false });
-addEventListener('mouseup', () => { dragging = false; mapDrag = false; });
+addEventListener('mouseup', (e) => {
+  dragging = false;
+  if (mapDrag && mapDown) {
+    const far = Math.hypot(e.clientX - mapDown.x, e.clientY - mapDown.y) > 5;
+    if (!far) {
+      const r = mapPick(e.clientX, e.clientY);
+      mapSel = (r && mapSel === r) ? null : r;
+      mapHighlight(r || mapSel);
+      mapInfo(r || mapSel);
+    }
+  }
+  mapDrag = false; mapDown = null;
+});
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
 document.addEventListener('pointerlockchange', () => {
@@ -1510,7 +1603,7 @@ document.addEventListener('pointerlockchange', () => {
 
 document.addEventListener('mousemove', (e) => {
   if (mapOpen) {
-    if (!mapDrag) return;
+    if (!mapDrag) { mapPoint(e.clientX, e.clientY); return; }
     mapYaw -= (e.movementX || 0) * 0.006;
     mapPitch = Math.max(-1.35, Math.min(1.35, mapPitch + (e.movementY || 0) * 0.005));
     updateMapCam();
