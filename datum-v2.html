@@ -330,7 +330,7 @@ function newRun() {
 // ── the deal: deterministic, opaque, always with a way on ────────
 function deal(depth, cell, above, water, power, support, read) {
   const a = above ? (TYPE_IX[above.type] * 11 + above.size * 13 + above.ticks * 7) : 3;
-  const seed = (depth + 1) * 7 + (cell.x * 3 + cell.z) * 5 + a
+  const seed = (depth + 1) * 7 + (cell.x * 3 + cell.z) * 5 + (cell.y || 0) * 11 + a
              + water * 17 + power * 19 + support * 23 + read * 29 + 31;
   const step = 1 + ((depth + 1) % 3);
   const out = [];
@@ -880,15 +880,19 @@ function promptFor(gate) {
   const v = GATES[gate.dir].v;
   const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
   const name = GATES[gate.dir].name;
-  return n ? { text: 'E · ' + name + ' · пройти', mode: 'enter' }
-           : { text: 'E · ' + name + ' · открыть шлюз', mode: 'draft' };
+  const verb = gate.dir === 'DOWN' ? 'спуститься'
+             : gate.dir === 'UP'   ? 'подняться' : 'пройти';
+  const verb2 = gate.dir === 'DOWN' ? 'пробить шахту'
+              : gate.dir === 'UP'   ? 'пробить люк' : 'открыть шлюз';
+  return n ? { text: 'E · ' + name + ' · ' + verb, mode: 'enter' }
+           : { text: 'E · ' + name + ' · ' + verb2, mode: 'draft' };
 }
 
 // ── draft ───────────────────────────────────────────────────────
 function openDraft(dir) {
   const r = S.rooms[S.here];
   const v = GATES[dir].v;
-  const cell = { x: r.x + v[0], z: r.z + v[2] };
+  const cell = { x: r.x + v[0], y: r.y + v[1], z: r.z + v[2] };
   const d = deal(-r.y, cell, S.came, 0, 0, 0, Math.min(3, S.placed));
   S.draft = { dir: dir, cards: d.cards, sel: -1, bad: d.bad };
   paintDraft();
@@ -974,10 +978,11 @@ function transition(dir) {
   // step out of the new compartment's opposite gate, facing inwards
   const back = GATES[G.opp];
   const HS = C.inner/2 - 0.95;
+  const vertical = v[1] !== 0;
   S.here = nk;
   S.pos.x = back.v[0] * HS;
-  S.pos.z = back.v[2] * HS;
-  S.yaw = Math.atan2(v[0], v[2]) - Math.PI;
+  S.pos.z = back.v[2] * HS;          // both zero for a shaft: you land under it
+  if (!vertical) S.yaw = Math.atan2(v[0], v[2]) - Math.PI;
   S.pitch = 0;
   S.came = n.card;
   S.ticks += n.card.ticks;          // the turn is the gate-to-gate crossing
@@ -988,10 +993,13 @@ function transition(dir) {
   for (const d of doorsAt(n, back))      { d.want = 1; d.open = 0.55; }
 
   S.cross = {
-    t0: performance.now(), dur: 760,
+    t0: performance.now(), dur: vertical ? 900 : 760,
     from: fromPos,
     to: new THREE.Vector3(n.x*C.size + S.pos.x, n.y*C.height + C.eye, n.z*C.size + S.pos.z),
     fromYaw: fromYaw, toYaw: S.yaw, fromPitch: fromPitch,
+    // a shaft is climbed on its axis: get over the hole, then drop or rise
+    vert: vertical,
+    axis: vertical ? { x:n.x*C.size, z:n.z*C.size } : null,
   };
 
   if (S.ticks >= nextSync()) sync();
@@ -1237,10 +1245,18 @@ function animCross(now) {
   // hundreds of metres out of the structure
   const k = Math.max(0, Math.min(1, (now - c.t0) / c.dur));
   const e = k * k * (3 - 2 * k);
-  rig.position.set(
-    c.from.x + (c.to.x - c.from.x) * e,
-    c.from.y + (c.to.y - c.from.y) * e + Math.sin(k * Math.PI) * 0.05,
-    c.from.z + (c.to.z - c.from.z) * e);
+  if (c.vert) {
+    // over the hole first, then straight down or up the shaft
+    const hk = Math.min(1, e * 2.6);
+    rig.position.x = c.from.x + (c.axis.x - c.from.x) * hk;
+    rig.position.z = c.from.z + (c.axis.z - c.from.z) * hk;
+    rig.position.y = c.from.y + (c.to.y - c.from.y) * e;
+  } else {
+    rig.position.set(
+      c.from.x + (c.to.x - c.from.x) * e,
+      c.from.y + (c.to.y - c.from.y) * e + Math.sin(k * Math.PI) * 0.05,
+      c.from.z + (c.to.z - c.from.z) * e);
+  }
   let dy = c.toYaw - c.fromYaw;
   while (dy > Math.PI) dy -= Math.PI*2;
   while (dy < -Math.PI) dy += Math.PI*2;
