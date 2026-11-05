@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>DATUM — бумажный прототип драфта (E1)</title>
+<style>
+  /* ── DATUM paper kit ──────────────────────────────────────────
+     Screen: the same darkness as the game, so the records read the
+     way they will read in the draft panel.
+     Print:  white paper, black ink, one section per page.           */
+  :root {
+    --plate:#0b0c0e; --line:#24262a; --line2:#14161a;
+    --dim:#6f737a; --mid:#a7abb3; --hi:#eeebe4;
+    --amb:#e8a63c; --bad:#e0563a; --good:#a2d68a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#050607; color:var(--mid); overflow-x:hidden;
+    font:14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    padding:28px 22px 80px; }
+  .wrap { max-width:1080px; margin:0 auto; }
+  h1 { font-size:20px; font-weight:500; color:var(--hi); letter-spacing:.14em; margin-bottom:6px; }
+  h2 { font-size:13px; font-weight:500; color:var(--amb); letter-spacing:.22em;
+       margin:34px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  h3 { font-size:12px; font-weight:500; color:var(--mid); letter-spacing:.16em; margin:18px 0 8px; }
+  p, li { color:var(--mid); margin-bottom:8px; }
+  ul, ol { padding-left:20px; }
+  .sub { color:var(--dim); font-size:13px; }
+  .note { border-left:2px solid var(--amb); padding:8px 12px; background:rgba(232,166,60,.06);
+          margin:12px 0; color:var(--mid); }
+  .warn { border-left:2px solid var(--bad); padding:8px 12px; background:rgba(224,86,58,.07); }
+  code { color:var(--amb); }
+
+  /* ── the table: interactive dealer ─────────────────────────── */
+  .table { position:relative; background:var(--plate); border:1px solid var(--line);
+    padding:16px 18px; margin-top:14px;
+    clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px); }
+  .state { display:flex; flex-wrap:wrap; gap:18px; font-size:12px; color:var(--dim);
+           letter-spacing:.08em; margin-bottom:14px; }
+  .state b { color:var(--hi); font-weight:500; font-variant-numeric:tabular-nums; }
+  .state .amb { color:var(--amb); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  button { font:inherit; font-size:12px; letter-spacing:.06em; cursor:pointer;
+    background:#111316; color:var(--mid); border:1px solid var(--line); padding:7px 13px;
+    clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px); }
+  button:hover { color:var(--hi); border-color:#3a3d43; }
+  button.amb { color:var(--amb); border-color:#4a3a1c; }
+  button:disabled { opacity:.35; cursor:default; }
+
+  .offer { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:16px; }
+  .card { border:1px solid var(--line); background:#0e1013; padding:12px 12px 10px; min-height:184px;
+    display:flex; flex-direction:column;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px); }
+  .card .code { color:var(--dim); font-size:11px; letter-spacing:.14em; }
+  .card .name { color:var(--hi); font-size:14px; letter-spacing:.06em; margin:3px 0 8px; }
+  .card .fields { font-size:11px; color:var(--dim); letter-spacing:.08em; line-height:1.9; }
+  .card .fields b { color:var(--mid); font-weight:500; }
+  .card .eff { font-size:11px; color:#8a8e96; margin-top:auto; padding-top:8px; line-height:1.5; }
+  .card .tick { color:var(--amb); font-size:11px; letter-spacing:.1em; margin-top:6px; }
+  .card.blind { border-color:#3a2a12; background:#0d0c0a; }
+  .card.blind .name { color:#7a6a4a; }
+  .card .noise { color:#3d3a34; letter-spacing:.3em; }
+
+  .placed { margin-top:18px; font-size:12px; color:var(--dim); line-height:1.9; }
+  .placed b { color:var(--mid); font-weight:500; }
+  .placed .d { color:#4c4f55; }
+
+  /* ── printable sheets ──────────────────────────────────────── */
+  .sheet { margin-top:26px; border:1px solid var(--line2); padding:16px; background:#08090a; }
+  table { border-collapse:collapse; width:100%; font-size:11px; }
+  th, td { border:1px solid var(--line); padding:4px 6px; text-align:left; color:var(--mid); }
+  th { color:var(--dim); font-weight:500; letter-spacing:.1em; font-size:10px; }
+  .grid td { height:30px; }
+  .grid td.lvl { color:var(--dim); width:44px; text-align:center; }
+  .ticks { display:grid; grid-template-columns:repeat(20,1fr); gap:0; }
+  .ticks div { height:22px; border:1px solid var(--line); font-size:8px; color:var(--dim);
+               text-align:center; line-height:20px; }
+  .ticks div.sync { border-color:var(--amb); color:var(--amb); }
+
+  @media print {
+    body { background:#fff; color:#000; padding:0; font-size:10px; }
+    .table, .no-print { display:none !important; }
+    h1 { color:#000; }
+    h2 { color:#000; border-color:#999; page-break-before:always; }
+    h2:first-of-type { page-break-before:avoid; }
+    p, li, .sub, .card .fields, th, td { color:#222; }
+    .note, .warn { background:#f4f4f4; border-color:#888; color:#222; }
+    .sheet { border-color:#bbb; background:#fff; }
+    th, td { border-color:#aaa; color:#222; }
+    .card { border-color:#999; background:#fff; }
+    .card .name { color:#000; }
+    .card .code, .card .fields b { color:#333; }
+    .card .eff { color:#333; }
+    .card .tick { color:#000; }
+    a { color:#000; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>DATUM · БУМАЖНЫЙ ПРОТОТИП ДРАФТА</h1>
+<p class="sub">Эпик E1. Проверяет три вещи, каждая из которых дороже в коде: драфт — решение или монетка; выводится ли правило, по которому приходит тройка; хватает ли инструментов хаба на шесть загадок. Версия 1.0 · 2026-11-05. Родитель — <code>gdd/loops.md</code>, <code>gdd/progression.md</code>.</p>
+
+<div class="warn no-print">
+  <b>Тестеру.</b> Не открывай вкладку «функция» и не читай исходник этого файла, пока не сыграешь
+  восемь забегов. Весь смысл упражнения — узнать, выводится ли правило само. Подсмотреть — испортить замер.
+</div>
+
+<h2>1. Правила (читать один раз)</h2>
+
+<p><b>Что это.</b> Забег на бумаге: спуск по структуре, где каждая дверь — драфт из трёх записей реестра. Ты играешь за одного архетипа; отряд не нужен, тело одно.</p>
+
+<h3>Забег</h3>
+<ol>
+  <li>Начало: ярус 1, <b>0 тактов</b>, баланс полей ноль.</li>
+  <li>На каждом ярусе открываешь проход и получаешь <b>три записи</b>. Читаются поля (⌀ масштаб, ПИТ) и тип. Личность записи читается, если ты её уже расшифровал.</li>
+  <li>Ставишь одну. Она стоит свои <b>такты</b>, меняет баланс (вода / питание / опора) и спускает тебя на ярус ниже, если у неё есть шахта.</li>
+  <li><b>Сверка</b> на 25-м, 50-м, 75-м, 100-м такте. Сверка откатывает правки: баланс полей возвращается к нулю, а если на текущем ярусе нет прохода вниз — забег кончается тупиком.</li>
+  <li>Забег кончается: <b>тупиком</b> (сверка застала без спуска), <b>смертью</b> (бой проигран) или <b>достижением</b> (ярус 12 = нижний).</li>
+</ol>
+
+<h3>Чтение записи</h3>
+<p>Строка записи выглядит так:</p>
+<p><code>T-04 · ОБСЛ · ⌀11 · ПИТ: — · ▓▓░ · [личность]</code></p>
+<ul>
+  <li><b>Код и роль</b> — читаются всегда (роль: ПРОХ / ВОДА / ПИТ / ОПОРА / БОЙ).</li>
+  <li><b>⌀ масштаб</b> — читается всегда: 3, 4, 6, 11 метров. Большая комната дороже в тактах.</li>
+  <li><b>ПИТ</b> — читается всегда: «+» питает вниз, «−» жрёт питание, «—» нейтральна.</li>
+  <li><b>▓▓░</b> — сколько полей записи ты уже расшифровал. Третье поле читается только после того, как ты видел такую комнату в игре.</li>
+  <li><b>[личность]</b> — то, что даёт комнату: эффект. Нечитаемо, пока не расшифровал.</li>
+</ul>
+<p><b>Как расшифровывается личность.</b> Только опытом: поставил комнату и прошёл её — понял, что она делает. В ките поставленное запоминается <b>между забегами</b> (обнови страницу — забудешь всё: это и есть сброс прогресса). Первые несколько драфтов поэтому выбираются по полям — роли, масштабу, питанию и цене, — а не по эффекту. Так и должно быть: это и есть слепой драфт.</p>
+
+<h3>Сбой</h3>
+<p>Если на ярусе плохо — <b>перегрузка питания</b> (сумма «−» больше двух), <b>вода</b> (две и больше водяных комнат подряд) или <b>нет опоры</b> (ни одной опорной комнаты выше) — одна из трёх записей приходит <b>нечитаемой</b>: видны код, роль, ⌀ и ПИТ, но не личность. Это не наказание, а шанс: поставил и прошёл — расшифровал навсегда. Сбой не бросают кубиком, он приходит от состояния.</p>
+
+<h3>Бой</h3>
+<p>Роль БОЙ: комната стоит своих тактов плюс 2 такта боя. Победил — материал +2. Проиграл — забег кончается смертью. Материал тратится на дорогие записи (у них цена в материале, а не в тактах).</p>
+
+<h3>Что записывать</h3>
+<p>После каждого драфта — одну строку в журнал: ярус, такт, что выбрал, <b>почему</b>. Слово «наугад» — это данные, а не стыд: именно его доля и решает судьбу механики.</p>
+
+<h2>2. Стол (интерактивно, только на экране)</h2>
+<p class="sub">Раздаёт тройку по правилу, а не по кубику. Состояние — то же, что в игре: ярус, комната сверху, баланс полей, расшифровано.</p>
+
+<div class="table">
+  <div class="state">
+    <span>ярус <b id="s-depth">1</b></span>
+    <span>такты <b id="s-ticks">0</b> / сверка <b id="s-sync">40</b></span>
+    <span>вода <b id="s-water">0</b></span>
+    <span>питание <b id="s-power">0</b></span>
+    <span>опора <b id="s-support">0</b></span>
+    <span>расшифровано <b id="s-read">0</b></span>
+    <span>материал <b id="s-mat">0</b></span>
+    <span id="s-mode" class="amb">—</span>
+  </div>
+  <div class="row">
+    <button class="amb" id="b-deal">открыть проход · раздать тройку</button>
+    <button id="b-sync">сверка</button>
+    <button id="b-reset">новый забег</button>
+    <button id="b-fn">функция</button>
+  </div>
+  <div class="offer" id="offer"></div>
+  <div class="placed" id="placed"></div>
+  <div id="fnbox" class="placed" style="display:none"></div>
+</div>
+
+<h2>3. Разрез — сетка для записи (печатать)</h2>
+<p class="sub">3×3 в плане, 12 ярусов вниз. В клетку вписывай код записи; в правой колонке — баланс полей яруса. Ярус 12 — Датум.</p>
+<div class="sheet">
+  <table class="grid">
+    <tr><th>ярус</th><th>1</th><th>2</th><th>3</th><th>вода</th><th>питание</th><th>опора</th></tr>
+    <tr><td class="lvl">1</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">2</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">3</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">4</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">5</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">6</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">7</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">8</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">9</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">10</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">11</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td class="lvl">12</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+  </table>
+</div>
+
+<h2>4. Журнал тактов (печатать)</h2>
+<p class="sub">Отмечай клетку за каждый такт. Янтарные — сверки: на них баланс полей сбрасывается, и без прохода вниз забег кончается.</p>
+<div class="sheet">
+  <div class="ticks" id="tickgrid"></div>
+  <p class="sub" style="margin-top:10px">Тактов потрачено: ______ · Сверок пройдено: ______ · Исход: тупик / смерть / ярус 12</p>
+</div>
+
+<h2>5. Журнал драфтов (печатать)</h2>
+<p class="sub">Одна строка на драфт. «Почему» — самое важное поле; если писать нечего, это тоже результат.</p>
+<div class="sheet">
+  <table>
+    <tr><th>№</th><th>ярус</th><th>такт</th><th>код выбранной</th><th>почему именно эта</th><th>был ли выбор очевиден</th></tr>
+    <tr><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>2</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>3</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>4</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>5</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>6</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>7</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>8</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>9</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>10</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>11</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>12</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>13</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>14</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>15</td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>16</td><td></td><td></td><td></td><td></td><td></td></tr>
+  </table>
+</div>
+
+<h2>6. Хаб — что проверяем (печатать)</h2>
+<p class="sub">Потолок Акта I — шесть замков. Здесь проверяется не игра, а вопрос 15 из §12 gdd: хватает ли вентилей, автомата и распорок на шесть загадок без повторов. Записывай для каждого замка: что наблюдалось, где, чем открылся.</p>
+<div class="sheet">
+  <table>
+    <tr><th>замок</th><th>наблюдение (где увидено)</th><th>метод</th><th>чем открылся</th><th>что изменил в забеге</th></tr>
+    <tr><td>1</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>2</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>3</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>4</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>5</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>6</td><td></td><td></td><td></td><td></td></tr>
+  </table>
+  <p class="sub" style="margin-top:10px">Инструменты хаба: вентиль · автомат · распорка. Если два замка открываются одним и тем же — это один замок, и потолок надо снижать.</p>
+</div>
+
+<h2>7. Итог забега — что записать после</h2>
+<div class="sheet">
+  <table>
+    <tr><th>вопрос</th><th>ответ</th></tr>
+    <tr><td>Сколько драфтов было очевидных (выбор без мысли)?</td><td></td></tr>
+    <tr><td>Сколько раз выбирал наугад?</td><td></td></tr>
+    <tr><td>Заметил ли правило, по которому приходит тройка? Сформулируй.</td><td></td></tr>
+    <tr><td>Был ли забег, ставший скучным после потери комнаты (надбавка +1 такт)?</td><td></td></tr>
+    <tr><td>Почему забег кончился — читалось ли это как своя ошибка?</td><td></td></tr>
+  </table>
+</div>
+
+<h2>8. Порог, на котором E1 считается пройденным</h2>
+<ul>
+  <li><b>Восемь забегов</b> подряд, в каждом не больше двух «наугад». Если наугад больше — драфт не даёт решения, и его надо переделывать до кода.</li>
+  <li><b>Правило функции сформулировано игроком</b> между 5-м и 10-м забегом. Раньше 3-го — арифметика, позже 15-го — USP невидим.</li>
+  <li><b>Шесть замков не повторяются</b> по инструменту, и каждый меняет забег.</li>
+  <li><b>Ни один забег не стал скучным</b> после потери комнаты: надбавка +1 такт работает как цена, а не как наказание.</li>
+</ul>
+
+</div>
+
+<script>
+/* ── cards ───────────────────────────────────────────────────────
+   Fields are the ones the draft panel reads: role, size, power.
+   "eff" is the personality — unreadable until decoded.            */
+var CARDS = [
+  { id:'T-01', role:'ПРОХ', size:4,  pit:'—', type:'проход', ticks:5, eff:'дверь вбок: ярус не меняется, +1 драфт' },
+  { id:'T-02', role:'ПРОХ', size:3,  pit:'—', type:'проход', ticks:4, down:true, eff:'шахта вниз' },
+  { id:'T-03', role:'ПРОХ', size:6,  pit:'—', type:'проход', ticks:7, down:true, eff:'шахта вниз, два выхода на выбор' },
+  { id:'T-04', role:'ПРОХ', size:4,  pit:'+', type:'проход', ticks:5, down:true, eff:'шахта вниз и питание ярусу ниже' },
+  { id:'T-05', role:'ПРОХ', size:3,  pit:'—', type:'проход', ticks:4, down:true, eff:'шахта вниз, узкая: бой только 1 на 1' },
+  { id:'T-06', role:'ПРОХ', size:11, pit:'−', type:'проход', ticks:10, down:true, eff:'зал на два яруса, вниз и вбок' },
+
+  { id:'T-07', role:'ВОДА', size:4,  pit:'—', type:'вода',   ticks:5, eff:'заливает ярус ниже: −1 такт у прохода под ней' },
+  { id:'T-08', role:'ВОДА', size:3,  pit:'−', type:'вода',   ticks:4, eff:'водопад: гасит питание двух ярусов ниже' },
+  { id:'T-09', role:'ВОДА', size:6,  pit:'—', type:'вода',   ticks:7, eff:'резервуар: держит воду, не заливая' },
+  { id:'T-10', role:'ВОДА', size:3,  pit:'+', type:'вода',   ticks:4, eff:'турбина: питание вниз вместо залива' },
+  { id:'T-11', role:'ВОДА', size:4,  pit:'−', type:'вода',   ticks:5, eff:'дренаж: снимает залив сверху' },
+  { id:'T-12', role:'ВОДА', size:6,  pit:'—', type:'вода',   ticks:7, eff:'затопленный ярус: комната ниже недоступна' },
+
+  { id:'T-13', role:'ПИТ',  size:3,  pit:'+', type:'питание', ticks:4, eff:'питает два яруса вниз' },
+  { id:'T-14', role:'ПИТ',  size:4,  pit:'+', type:'питание', ticks:5, eff:'узел: питание вниз и вбок' },
+  { id:'T-15', role:'ПИТ',  size:6,  pit:'−', type:'питание', ticks:6, eff:'печь: жрёт питание, даёт материал +1' },
+  { id:'T-16', role:'ПИТ',  size:3,  pit:'−', type:'питание', ticks:4, eff:'насос: поднимает воду вверх' },
+  { id:'T-17', role:'ПИТ',  size:4,  pit:'+', type:'питание', ticks:5, eff:'ретранслятор: сигнал наверх, слышно в хабе' },
+  { id:'T-18', role:'ПИТ',  size:3,  pit:'—', type:'питание', ticks:4, eff:'обесточенный узел: поле не читается у комнат ниже' },
+
+  { id:'T-19', role:'ОПОРА', size:6,  pit:'—', type:'опора', ticks:6, eff:'держит два яруса выше' },
+  { id:'T-20', role:'ОПОРА', size:4,  pit:'—', type:'опора', ticks:5, eff:'распорка: держит один ярус' },
+  { id:'T-21', role:'ОПОРА', size:11, pit:'—', type:'опора', ticks:9, eff:'несущий каркас на два яруса, дорого' },
+  { id:'T-22', role:'ОПОРА', size:3,  pit:'+', type:'опора', ticks:4, eff:'опора с питанием: держит и питает' },
+  { id:'T-23', role:'ОПОРА', size:6,  pit:'−', type:'опора', ticks:6, eff:'просевшая: держит, но тянет воду вниз' },
+  { id:'T-24', role:'ОПОРА', size:4,  pit:'—', type:'опора', ticks:5, eff:'клеймо на опоре: знак для кода сейфа' },
+
+  { id:'T-25', role:'БОЙ',  size:4,  pit:'—', type:'бой',    ticks:6, eff:'SEAM: 2 такта боя, материал +2' },
+  { id:'T-26', role:'БОЙ',  size:6,  pit:'−', type:'бой',    ticks:8, eff:'SEAL: 3 такта боя, материал +3' },
+  { id:'T-27', role:'БОЙ',  size:3,  pit:'—', type:'бой',    ticks:5, eff:'DRAY: толкает на ярус ниже, −1 целостность' },
+  { id:'T-28', role:'БОЙ',  size:4,  pit:'−', type:'бой',    ticks:6, eff:'TALLY: сверка раньше на 10 тактов' },
+  { id:'T-29', role:'БОЙ',  size:6,  pit:'—', type:'бой',    ticks:8, eff:'BREAK: 4 такта боя, материал +4' },
+  { id:'T-30', role:'БОЙ',  size:11, pit:'−', type:'бой',    ticks:11, eff:'КАДАВР: 6 тактов, материал +8, награда' }
+];
+
+var TYPE_IX = { 'проход':0, 'вода':1, 'питание':2, 'опора':3, 'бой':4 };
+
+var st = { depth:1, ticks:0, water:0, power:0, support:0, read:0, mat:0,
+           above:null, offer:[], placed:[], over:null };
+/* What you have lived through. Survives a new run on purpose: this is the
+   meta-progress the paper is meant to simulate, and it is the only one. */
+var KNOWN = {};
+var syncs = [25, 50, 75, 100];
+
+function nextSync(){ for (var i=0;i<syncs.length;i++) if (st.ticks < syncs[i]) return syncs[i]; return syncs[syncs.length-1]; }
+
+/* ── the function ────────────────────────────────────────────────
+   This is the thing under test. It is deterministic: the same state
+   always deals the same three. It is opaque on purpose: a player is
+   meant to feel the regularity before seeing the arithmetic.
+
+   seed = depth + above(role,size,ticks) + balance + decoded
+   The heavy weights sit on what the player most recently built,
+   which is why "I put a power room above" is the first regularity
+   anyone notices.                                                  */
+function deal(depth, above, water, power, support, read, alive) {
+  alive = alive || 1;
+  var a = above ? (TYPE_IX[above.type] * 11 + above.size * 13 + above.ticks * 7) : 3;
+  var seed = depth * 7 + a + water * 17 + power * 19 + support * 23 + read * 29 + alive * 31;
+  var step = 1 + (depth % 3);
+  var out = [];
+  for (var k = 0; k < 3; k++) {
+    var idx = ((seed + k * step * 7) % CARDS.length + CARDS.length) % CARDS.length;
+    var c = CARDS[idx];
+    /* avoid the same card twice in one offer */
+    var guard = 0;
+    while (out.some(function (o) { return o.id === c.id; }) && guard++ < 40) {
+      idx = (idx + 1) % CARDS.length; c = CARDS[idx];
+    }
+    out.push(c);
+  }
+  /* сбой: the registry loses legibility where the sector is bad */
+  var bad = (power >= 3) || (water >= 2) || (support === 0 && depth > 2);
+  if (bad) {
+    var blindAt = (depth + water) % 3;
+    out[blindAt] = { id: out[blindAt].id, role: out[blindAt].role, size: out[blindAt].size,
+                     pit: out[blindAt].pit, type: out[blindAt].type,
+                     ticks: out[blindAt].ticks, eff: null, blind: true };
+  }
+
+  /* The guarantee. A deterministic deal can be systematically wrong in a way
+     randomness never is: it can keep offering three rooms with no way down and
+     deadlock the run by arithmetic, not by luck. So the descent is always
+     present — everything else, including the room a lock wants, may be denied. */
+  if (!out.some(function (c) { return c.down; })) {
+    var pool = CARDS.filter(function (c) { return c.down; });
+    var pick = pool[seed % pool.length];
+    /* never overwrite the blind card: the сбой must survive the guarantee */
+    var at = out[0].blind ? 1 : 0;
+    if (out[at].blind) at = 2;
+    out[at] = pick;
+  }
+
+  return { cards: out, seed: seed, step: step, bad: bad };
+}
+
+function fieldLines(c, reveal) {
+  var pit = c.pit === '+' ? 'питает вниз' : c.pit === '-' ? 'жрёт питание' : 'нейтральна';
+  var read = '';
+  for (var i = 0; i < 3; i++) read += (i < st.read) ? '▓' : '░';
+  return '<div class="fields">' +
+    'роль <b>' + c.role + '</b><br>' +
+    '⌀ <b>' + c.size + '</b> м · ПИТ <b>' + c.pit + '</b><br>' +
+    '<span class="sub">' + pit + '</span><br>' +
+    'поля ' + read +
+    '</div>';
+}
+
+function render() {
+  document.getElementById('s-depth').textContent = st.depth;
+  document.getElementById('s-ticks').textContent = st.ticks;
+  document.getElementById('s-sync').textContent = nextSync();
+  document.getElementById('s-water').textContent = st.water;
+  document.getElementById('s-power').textContent = st.power;
+  document.getElementById('s-support').textContent = st.support;
+  document.getElementById('s-read').textContent = st.read;
+  document.getElementById('s-mat').textContent = st.mat;
+  document.getElementById('s-mode').textContent = st.over ? st.over : '—';
+
+  var box = document.getElementById('offer');
+  if (!st.offer.length) { box.innerHTML = '<p class="sub">проход не открыт</p>'; }
+  else {
+    box.innerHTML = st.offer.map(function (c, i) {
+      var blind = !!c.blind;
+      /* the personality is the part you have to live through: a room you have
+         never placed shows its fields and its type, and nothing else */
+      var seen = !!KNOWN[c.id] && !blind;
+      var title = seen ? (c.eff ? c.eff.split(':')[0] : 'запись') : '▓▓▒ ▒▓▓';
+      return '<div class="card' + (blind ? ' blind' : '') + '" data-i="' + i + '">' +
+        '<div class="code">' + c.id + ' · ' + c.type.toUpperCase() + '</div>' +
+        '<div class="name">' + title + '</div>' +
+        fieldLines(c, false) +
+        '<div class="eff">' + (seen
+            ? (c.eff || '') + (c.down ? ' · <b style="color:#6f737a">спуск</b>' : '')
+            : '<span class="noise">личность не читается</span>' +
+              (blind ? ' <span class="noise">· сбой</span>' : '')) + '</div>' +
+        '<div class="tick">' + c.ticks + ' такт' + (c.ticks > 1 ? 'а' : '') + '</div>' +
+        '<button class="amb" style="margin-top:8px">поставить</button>' +
+        '</div>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.card'), function (el) {
+      el.querySelector('button').onclick = function () { place(+el.dataset.i); };
+    });
+  }
+
+  var p = document.getElementById('placed');
+  if (!st.placed.length) p.innerHTML = '<span class="d">ничего не поставлено</span>';
+  else p.innerHTML = st.placed.map(function (r, i) {
+    return '<div>я' + r.depth + ' · такт ' + r.tick + ' · <b>' + r.id + '</b> ' + r.type +
+           ' · ' + r.ticks + ' такта' + (r.blind ? ' · <span class="d">сбой</span>' : '') + '</div>';
+  }).join('');
+}
+
+function place(i) {
+  var c = st.offer[i];
+  if (!c) return;
+  KNOWN[c.id] = true;                 // you have now seen what it does
+  var cost = c.ticks + (c.blind ? 0 : 0);
+  st.ticks += cost;
+  if (c.type === 'вода') st.water++;
+  if (c.type === 'питание') { if (c.pit === '+') st.power = Math.max(0, st.power - 1); else st.power++; }
+  if (c.type === 'опора') st.support++;
+  if (c.type === 'бой') st.mat += 2;
+  if (c.blind) st.read = Math.min(3, st.read + 1);
+
+  st.placed.push({ depth: st.depth, tick: st.ticks, id: c.id, type: c.type,
+                   ticks: cost, blind: !!c.blind });
+  st.above = c;
+
+  var sync = nextSync();
+  if (st.ticks >= sync) {
+    st.ticks = sync;
+    st.water = 0; st.power = 0; st.support = 0;
+    if (c.type !== 'проход') { st.over = 'ТУПИК на сверке ' + sync; st.offer = []; render(); return; }
+  }
+
+  if (c.down) st.depth++;
+  if (st.depth > 12) { st.over = 'ДОСТИЖЕНИЕ: ярус 12'; st.offer = []; render(); return; }
+
+  var d = deal(st.depth, st.above, st.water, st.power, st.support, st.read, 1);
+  st.offer = d.cards;
+  st._last = d;
+  render();
+}
+
+function newRun() {
+  st = { depth:1, ticks:0, water:0, power:0, support:0, read:0, mat:0,
+         above:null, offer:[], placed:[], over:null };
+  render();
+}
+
+document.getElementById('b-deal').onclick = function () {
+  if (st.over) return;
+  var d = deal(st.depth, st.above, st.water, st.power, st.support, st.read, 1);
+  st.offer = d.cards; st._last = d; render();
+};
+document.getElementById('b-sync').onclick = function () {
+  st.water = 0; st.power = 0; st.support = 0;
+  st.ticks = nextSync();
+  render();
+};
+document.getElementById('b-reset').onclick = newRun;
+document.getElementById('b-fn').onclick = function () {
+  var b = document.getElementById('fnbox');
+  if (b.style.display === 'none') {
+    if (!confirm('Это испортит замер, если ты ещё не играл. Показать функцию?')) return;
+    var d = st._last;
+    b.style.display = 'block';
+    b.innerHTML = '<div style="color:#4c4f55;line-height:1.8">' +
+      'seed = ярус×7 + (сверху: тип×11 + ⌀×13 + такты×7) + вода×17 + питание×19 + опора×23 + расшифровано×29 + живых×31<br>' +
+      'шаг = 1 + ярус mod 3<br>' +
+      'тройка = пул[(seed + k·шаг·7) mod 30], k = 0,1,2<br>' +
+      'сбой = питание ≥ 3, или вода ≥ 2, или опора = 0 при ярусе &gt; 2<br>' +
+      (d ? 'текущий seed = <span style="color:#e8a63c">' + d.seed + '</span>, шаг ' + d.step + ', сбой: ' + (d.bad ? 'да' : 'нет') : '') +
+      '</div>';
+  } else { b.style.display = 'none'; }
+};
+
+/* printable tick grid */
+(function () {
+  var g = document.getElementById('tickgrid');
+  var html = '';
+  for (var i = 1; i <= 200; i++) {
+    var s = (i === 25 || i === 50 || i === 75 || i === 100) ? ' class="sync"' : '';
+    html += '<div' + s + '>' + (i % 20 === 0 ? i : '') + '</div>';
+  }
+  g.innerHTML = html;
+})();
+
+render();
+</script>
+</body>
+</html>
