@@ -86,8 +86,15 @@ def main():
     ART_KEY = {'v2_passage': 'проход', 'v2_water': 'вода', 'v2_power': 'питание',
                'v2_support': 'опора', 'v2_fight': 'бой', 'v2_hub': 'хаб'}
     art_script = ''
-    roomdir = os.path.join(ROOT, 'assets', 'roomart')
-    if os.path.isdir(roomdir):
+    # originals live in src/ like every other generated render; assets/ is
+    # regenerated and ignored, so art that cannot be regenerated must not go there
+    roomdir = None
+    for cand in (os.path.join(ROOT, 'src', 'roomart'),
+                 os.path.join(ROOT, 'assets', 'roomart')):
+        if os.path.isdir(cand):
+            roomdir = cand
+            break
+    if roomdir:
         arts = {}
         for fn in sorted(os.listdir(roomdir)):
             base, ext = os.path.splitext(fn)
