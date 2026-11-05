@@ -79,7 +79,30 @@ def main():
     lib = open(THREE, encoding='utf-8').read()
     if '</script>' in lib:
         sys.exit('three.min.js contains </script> — cannot inline safely')
-    html = html.replace(CDN, '<script>\n' + lib + '\n</script>')
+
+    # room art: one picture per room type, keyed by file name
+    art_script = ''
+    roomdir = os.path.join(ROOT, 'assets', 'roomart')
+    if os.path.isdir(roomdir):
+        arts = {}
+        for fn in sorted(os.listdir(roomdir)):
+            base, ext = os.path.splitext(fn)
+            ext = ext.lower()
+            if ext not in ('.png', '.jpg', '.jpeg', '.webp'):
+                continue
+            mime = {'.png': 'image/png', '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg', '.webp': 'image/webp'}[ext]
+            data = base64.b64encode(open(os.path.join(roomdir, fn), 'rb').read()).decode('ascii')
+            arts[base] = 'data:%s;base64,%s' % (mime, data)
+            print('baked    %-28s %8.1f kb  (room art: %s)' % (fn, len(data) / 1024, base))
+        if arts:
+            art_script = '<script>window.__ROOMART__=' + json.dumps(arts) + ';</script>\n'
+        else:
+            print('room art none — cards will show glyphs')
+    else:
+        print('room art none — cards will show glyphs')
+
+    html = html.replace(CDN, art_script + '<script>\n' + lib + '\n</script>')
     print('baked    %-28s %8.1f kb  (offline)' % ('three.min.js', len(lib) / 1024))
 
     if os.path.exists(TEX):

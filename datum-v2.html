@@ -20,10 +20,8 @@
     font-family:"Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif;
     color:var(--ink); -webkit-font-smoothing:antialiased; }
   canvas { display:block; }
-  /* the stage never sits UNDER the draft sheet: it shrinks instead */
   body > canvas { position:fixed; left:0; top:0; width:100%; height:100%;
     image-rendering:pixelated; z-index:0; }
-  body.draft > canvas { height:calc(100% - 344px); }
 
   /* ── top bar ─────────────────────────────────────────────────── */
   #top { position:fixed; top:0; left:0; right:0; height:64px; display:flex;
@@ -99,46 +97,50 @@
     background:repeating-linear-gradient(-45deg, var(--red) 0 12px, #1a0d09 12px 24px); }
   #hazard.on { display:block; }
 
-  /* ── draft sheet ─────────────────────────────────────────────── */
-  #sheet { position:fixed; left:0; right:0; bottom:0; z-index:30; display:none;
-    background:var(--plate); border-top:1px solid var(--line2); padding:0 0 14px; }
-  #sheet.on { display:block; }
-  #sheet .stripe { height:9px;
-    background:repeating-linear-gradient(-45deg, var(--amb) 0 12px, #241a08 12px 24px); }
+  /* ── draft: the choice sits in the middle of the room ────────── */
+  #sheet { position:fixed; inset:0; z-index:30; display:none;
+    align-items:center; justify-content:center; flex-direction:column; gap:16px;
+    background:rgba(4,5,6,.72); padding:24px; }
+  #sheet.on { display:flex; }
 
-  .sheetrow { display:flex; align-items:center; gap:26px; padding:16px 22px 10px; }
-  #bigval { font-size:62px; font-weight:700; line-height:.9; letter-spacing:-.02em; color:var(--dim2); }
-  #bigval.sel { color:var(--ink); }
-  #biglab { font-size:11px; letter-spacing:.22em; color:var(--dim2); text-transform:uppercase;
-            margin-top:8px; }
-  #prompt2 { flex:1; font-size:12px; letter-spacing:.06em; color:var(--dim); line-height:1.7; }
-  #prompt2 em { color:var(--amb); font-style:normal; }
+  #drafthead { text-align:center; max-width:680px; }
+  #drafthead .k { font-size:10px; letter-spacing:.3em; color:var(--dim2); text-transform:uppercase; }
+  #drafthead .w { font-size:26px; font-weight:700; letter-spacing:.16em; text-transform:uppercase;
+                  color:var(--amb); margin-top:5px; }
+  #drafthead .s { font-size:11px; letter-spacing:.06em; color:var(--dim); margin-top:9px; line-height:1.6; }
+  #drafthead .s em { color:var(--amb); font-style:normal; }
 
-  #cards { display:flex; gap:10px; padding:0 22px; }
-  .card { flex:1; min-height:128px; border:1px solid var(--line2); background:var(--plate2);
-    padding:11px 12px 9px; cursor:pointer; position:relative;
-    clip-path:polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%); }
-  .card:hover { border-color:var(--dim); }
-  .card.sel { background:var(--ink); color:#0a0b0d; border-color:var(--ink); }
-  .card.sel .k, .card.sel .f b { color:#0a0b0d; }
-  .card.sel .f { color:#3b3f46; }
-  .card .k { font-size:10px; letter-spacing:.2em; color:var(--dim2); text-transform:uppercase; }
-  .card .n { font-size:13px; font-weight:700; letter-spacing:.01em; margin:7px 0 8px; line-height:1.35; }
-  .card .f { font-size:11px; letter-spacing:.06em; color:var(--dim); line-height:1.8; }
+  #cards { display:flex; gap:14px; justify-content:center; }
+  .card { width:236px; border:1px solid var(--line2); background:var(--plate);
+    padding:0 0 12px; cursor:pointer; position:relative;
+    clip-path:polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%);
+    transition:transform .12s ease, border-color .12s ease; }
+  .card:hover { border-color:var(--dim); transform:translateY(-3px); }
+  .card.sel { border-color:var(--ink); background:var(--ink); color:#0a0b0d; }
+  .card .art { height:130px; background:#0c0e11 center/cover no-repeat;
+    border-bottom:1px solid var(--line2); display:flex; align-items:center;
+    justify-content:center; }
+  .card .art span { font-size:24px; letter-spacing:.12em; color:#24272c; font-weight:700; }
+  .card .k { font-size:9px; letter-spacing:.2em; color:var(--dim2); text-transform:uppercase;
+             padding:9px 12px 0; }
+  .card .n { font-size:13px; font-weight:700; margin:6px 12px 8px; line-height:1.35; min-height:36px; }
+  .card .f { font-size:11px; letter-spacing:.06em; color:var(--dim); line-height:1.75; padding:0 12px; }
   .card .f b { color:var(--ink); font-weight:600; }
-  .card .p { position:absolute; right:11px; bottom:9px; font-size:12px; font-weight:700;
+  .card.sel .k, .card.sel .f b, .card.sel .n { color:#0a0b0d; }
+  .card.sel .f { color:#41454c; }
+  .card .p { position:absolute; right:12px; bottom:11px; font-size:12px; font-weight:700;
              color:var(--amb); letter-spacing:.04em; }
   .card.sel .p { color:#8a5a10; }
   .card.blind { border-style:dashed; }
-  .card.blind .n { color:var(--dim2); letter-spacing:.3em; }
 
-  #actbar { display:flex; gap:10px; padding:12px 22px 0; }
-  #place { flex:1; height:56px; border:0; background:var(--amb); color:#140d02;
-    font:inherit; font-size:16px; font-weight:700; letter-spacing:.2em; text-transform:uppercase;
-    cursor:pointer; clip-path:polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%); }
+  #actbar { display:flex; gap:10px; align-items:center; }
+  #place { height:54px; padding:0 46px; border:0; background:var(--amb); color:#140d02;
+    font:inherit; font-size:15px; font-weight:700; letter-spacing:.2em; text-transform:uppercase;
+    cursor:pointer; clip-path:polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%); }
   #place:disabled { background:#2a2d33; color:var(--dim2); cursor:default; }
-  #cancel { width:56px; height:56px; border:1px solid var(--line2); background:transparent;
+  #cancel { width:54px; height:54px; border:1px solid var(--line2); background:transparent;
     color:var(--dim); font-size:20px; cursor:pointer; }
+  #draftfoot { font-size:10px; letter-spacing:.16em; color:var(--dim2); text-transform:uppercase; }
 
   /* ── cut view ────────────────────────────────────────────────── */
   #cut { position:fixed; inset:0; z-index:40; background:rgba(6,7,8,.97); display:none;
@@ -193,19 +195,17 @@
 <div id="lock">клик по экрану — смотреть мышью · или тяни мышью с зажатой кнопкой</div>
 
 <div id="sheet">
-  <div class="stripe"></div>
-  <div class="sheetrow">
-    <div>
-      <div id="bigval">—</div>
-      <div id="biglab">масштаб</div>
-    </div>
-    <div id="prompt2"></div>
+  <div id="drafthead">
+    <div class="k">открыт шлюз</div>
+    <div class="w" id="draftWhere">север</div>
+    <div class="s" id="draftNote"></div>
   </div>
   <div id="cards"></div>
   <div id="actbar">
     <button id="cancel">✕</button>
     <button id="place" disabled>поставить</button>
   </div>
+  <div id="draftfoot">клик — выбрать · enter — поставить · esc — отмена</div>
 </div>
 
 <div id="cut">
@@ -302,6 +302,11 @@ const GATES = {
 };
 const HORIZ = ['N','E','S','W'];
 const KNOWN = {};                    // what you have lived through
+
+// Room art per type, injected by build/make_v2.py as window.__ROOMART__.
+// Without it the cards show a glyph, so the prototype never depends on art.
+const ROOMART = (typeof window !== 'undefined' && window.__ROOMART__) ? window.__ROOMART__ : {};
+const TYPE_GLYPH = { 'проход':'▤', 'вода':'≋', 'питание':'⌁', 'опора':'▮', 'бой':'✕', 'хаб':'◉' };
 
 // ── state ───────────────────────────────────────────────────────
 let S = null;
@@ -798,6 +803,9 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
     boxInto(AM, 0.9, 0.04, 0.9, 0, H - 0.2, 0);
   }
 
+  // flooded from above: water that ran down the column is visible on the floor
+  if (r.flood) boxInto(WA, I - 0.45, 0.04, I - 0.45, 0, 0.085, 0);
+
   // the vertical shafts get a collar so the hole reads as engineering
   if (dn) {
     const e = vw + 0.12;
@@ -888,15 +896,33 @@ function promptFor(gate) {
            : { text: 'E · ' + name + ' · ' + verb2, mode: 'draft' };
 }
 
+// ── the column above you ────────────────────────────────────────
+// Water runs down, power runs down, support holds what is above. What stands
+// over a cell is the state that cell is drafted from — the one input of the
+// deal you can plan.
+function columnState(x, y, z) {
+  const s = { water:0, power:0, support:0, rooms:0 };
+  for (let k = 1; k <= 4; k++) {
+    const r = S.rooms[key(x, y + k, z)];
+    if (!r) continue;
+    s.rooms++;
+    if (r.card.type === 'вода') s.water++;
+    if (r.card.type === 'опора') s.support++;
+    if (r.card.type === 'питание') s.power += (r.card.pit === '+' ? -1 : 1);
+  }
+  return s;
+}
 // ── draft ───────────────────────────────────────────────────────
 function openDraft(dir) {
   const r = S.rooms[S.here];
   const v = GATES[dir].v;
   const cell = { x: r.x + v[0], y: r.y + v[1], z: r.z + v[2] };
-  const d = deal(-r.y, cell, S.came, 0, 0, 0, Math.min(3, S.placed));
+  const col = columnState(cell.x, cell.y, cell.z);
+  const d = deal(-r.y, cell, S.came, col.water, col.power, col.support, Math.min(3, S.placed));
   S.draft = { dir: dir, cards: d.cards, sel: -1, bad: d.bad };
   paintDraft();
-  document.body.classList.add('draft');
+  document.getElementById('prompt').classList.remove('on');
+  document.getElementById('lock').classList.add('off');
   document.getElementById('sheet').classList.add('on');
   document.getElementById('lock').classList.add('off');
   sizeRT();
@@ -905,23 +931,22 @@ function openDraft(dir) {
 
 function paintDraft() {
   const d = S.draft;
-  const sel = d.sel >= 0 ? d.cards[d.sel] : null;
-  const bv = document.getElementById('bigval');
-  bv.textContent = sel ? sel.size : '—';
-  bv.className = sel ? 'sel' : '';
-  document.getElementById('biglab').textContent = sel ? 'масштаб, м' : 'масштаб';
-  document.getElementById('prompt2').innerHTML =
-    'шлюз: <em>' + GATES[d.dir].name + '</em> · заглушён, за ним пусто. ' +
-    'три записи реестра; поля читаются, личность — нет.' +
-    (d.bad ? '<br><em>сектор в плохом состоянии: одна запись нечитаема.</em>' : '');
+  document.getElementById('draftWhere').textContent = GATES[d.dir].name;
+  document.getElementById('draftNote').innerHTML = d.bad
+    ? 'заглушён, за ним пусто · <em>сектор в плохом состоянии: одна запись нечитаема</em>'
+    : 'заглушён, за ним пусто · три записи реестра: поля читаются, личность — нет';
   const box = document.getElementById('cards');
   box.innerHTML = d.cards.map((c, i) => {
     const blind = !!c.blind;
     const known = !!KNOWN[c.id] && !blind;
+    const art = ROOMART[c.type];
     return '<div class="card' + (blind ? ' blind' : '') + (d.sel === i ? ' sel' : '') + '" data-i="' + i + '">' +
+      (art
+        ? '<div class="art" style="background-image:url(' + art + ')"></div>'
+        : '<div class="art"><span>' + (TYPE_GLYPH[c.type] || '·') + '</span></div>') +
       '<div class="k">' + c.id + ' · ' + c.type + '</div>' +
       '<div class="n">' + (known ? c.eff : '· · · · ·') + '</div>' +
-      '<div class="f">роль <b>' + c.role + '</b><br>⌀ <b>' + c.size + '</b> м · пит <b>' + c.pit + '</b>' +
+      '<div class="f">⌀ <b>' + c.size + '</b> м · пит <b>' + c.pit + '</b>' +
       (c.down ? '<br><b>шахта вниз</b>' : '') + (c.up ? '<br><b>люк вверх</b>' : '') + '</div>' +
       '<div class="p">' + c.ticks + ' т</div>' +
       '</div>';
@@ -935,7 +960,6 @@ function paintDraft() {
 function closeDraft() {
   S.draft = null;
   document.getElementById('sheet').classList.remove('on');
-  document.body.classList.remove('draft');
   if (!S.over && !locked) document.getElementById('lock').classList.remove('off');
   sizeRT();
   hud();
@@ -955,6 +979,8 @@ function placeChosen() {
     gates: gatesFor(card, GATES[d.dir].opp, seed),
     seen: true,
   };
+  const col2 = columnState(nx, ny, nz);
+  room.flood = col2.water >= 2;
   S.rooms[key(nx, ny, nz)] = room;
   S.placed++;
   closeDraft();
@@ -1042,9 +1068,11 @@ function hud() {
     'stat' + ((nx - S.ticks) <= 5 ? ' warn' : ((nx - S.ticks) <= 10 ? ' hot' : ''));
   document.getElementById('hazard').className = (nx - S.ticks) <= 5 ? 'on' : '';
 
+  const col = columnState(r.x, r.y, r.z);
   document.getElementById('crumbs').textContent =
     'отсек ' + (r.card.id) + ' · ярус ' + (r.y >= 0 ? '+' + r.y : r.y) +
-    ' · шлюзов ' + r.gates.length;
+    ' · шлюзов ' + r.gates.length +
+    ' · над тобой вода ' + col.water + ' пит ' + col.power + ' опора ' + col.support;
 
   if (!S.draft) {
     const g = gateNear();
