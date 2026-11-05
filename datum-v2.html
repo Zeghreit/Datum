@@ -286,6 +286,11 @@ const CARDS = [
 ];
 const TYPE_IX = { 'проход':0, 'вода':1, 'питание':2, 'опора':3, 'бой':4 };
 
+// The hub is not a record you can draw: it is where the structure begins.
+// Ticks do not run in it, so entering it is free.
+const HUB = { id:'H-00', role:'ХАБ', size:11, pit:'—', type:'хаб', ticks:0,
+              eff:'регламентный отсек: место пуска' };
+
 // gates are named after the wall they sit in; y is up
 const GATES = {
   N: { v:[0,0,-1], name:'север',  opp:'S' },
@@ -313,11 +318,11 @@ function newRun() {
     draft: null,
     over: null,
   };
-  const start = Object.assign({}, CARDS.find(c => c.id === 'T-03'));
-  // No shaft under your feet at the start: the first thing you must do is
-  // walk, not open a draft from where you woke up.
-  S.rooms['0,0,0'] = { card: start, x:0, y:0, z:0,
-                       gates: ['N','S'], seen: true };
+  // You wake up in the hub, in a corner of it: the walls behind you are the
+  // edge of the structure, and there is nothing to open there. Two gates lead
+  // in, both ahead of you.
+  S.rooms['0,0,0'] = { card: HUB, x:0, y:0, z:0, gates: ['N','E'], seen: true };
+  S.pos.x = -2.55; S.pos.z = 2.85; S.yaw = 0; S.pitch = 0;
   rebuild();
   hud();
 }
@@ -539,7 +544,21 @@ function rebuild() {
     if (n) list.push(n);
   }
 
-  for (const r of list) buildRoom(r, r === here, F, W, CL, MT, AM, WA);
+  for (const r of list) {
+    // Each room builds into its own lists and is moved into place exactly once.
+    const lf = [], lw = [], lc = [], lm = [], la = [], lwa = [];
+    buildRoom(r, r === here, lf, lw, lc, lm, la, lwa);
+    const dx = r.x*C.size, dy = r.y*C.height, dz = r.z*C.size;
+    for (const arr of [lf, lw, lc, lm, la, lwa]) {
+      for (const g of arr) g.translate(dx, dy, dz);
+    }
+    for (const g of lf) F.push(g);
+    for (const g of lw) W.push(g);
+    for (const g of lc) CL.push(g);
+    for (const g of lm) MT.push(g);
+    for (const g of la) AM.push(g);
+    for (const g of lwa) WA.push(g);
+  }
 
   const add = (l, m) => { const g = mergeGeoms(l); if (g) world.add(new THREE.Mesh(g, m)); };
   add(F, M.floor); add(W, M.wall); add(CL, M.ceil);
@@ -703,7 +722,15 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
 
   // dressing, so a compartment reads before you are inside it
   const t = r.card;
-  if (t.type === 'вода') {
+  if (t.type === 'хаб') {
+    // the regulator's compartment: a plate on the floor, a console, warm light
+    boxInto(MT, 2.8, 0.06, 2.8, 0, 0.04, 0);
+    boxInto(AM, 2.4, 0.02, 0.06, 0, 0.08, -1.35);
+    boxInto(AM, 2.4, 0.02, 0.06, 0, 0.08,  1.35);
+    boxInto(MT, 1.7, 1.15, 0.85, 0, 0.60, -HS + 0.85);
+    boxInto(AM, 1.3, 0.03, 0.05, 0, 1.18, -HS + 0.85);
+    boxInto(MT, 0.5, 1.5, 0.5, -HS + 1.0, 0.75, HS - 1.0);
+  } else if (t.type === 'вода') {
     boxInto(WA, I - 0.3, 0.04, I - 0.3, 0, 0.06, 0);
     boxInto(MT, 0.3, H, 0.3, -HS + 0.55, H/2, -HS + 0.55);
     boxInto(MT, 0.3, H, 0.3,  HS - 0.55, H/2,  HS - 0.55);
@@ -743,10 +770,9 @@ function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
     boxInto(MT, 0.12, 0.22, e*2,  e, H + 0.1, 0);
   }
 
-  // move everything into place
-  const dx = ox, dy = oy, dz = oz;
-  const shift = (arr) => { for (const g of arr) g.translate(dx, dy, dz); };
-  [F, W, CL, MT, AM, WA].forEach(shift);
+  // nothing to do here: the caller moves this room's geometry into place.
+  // It used to translate the shared lists, which moved every room built
+  // before it — the reason floors went missing after a few gates.
 }
 
 // ── camera / movement ───────────────────────────────────────────
@@ -1162,7 +1188,10 @@ function tick(now) {
 function animCross(now) {
   const c = S.cross;
   if (!c) return;
-  const k = Math.min(1, (now - c.t0) / c.dur);
+  // clamp at BOTH ends: the frame timestamp and performance.now() are not
+  // guaranteed to agree, and a negative k feeds a cubic that flies the camera
+  // hundreds of metres out of the structure
+  const k = Math.max(0, Math.min(1, (now - c.t0) / c.dur));
   const e = k * k * (3 - 2 * k);
   rig.position.set(
     c.from.x + (c.to.x - c.from.x) * e,
