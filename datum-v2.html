@@ -72,13 +72,13 @@
   #prompt.on { display:block; }
   #prompt b { color:#160f02; background:var(--amb); padding:2px 7px; margin-right:9px; }
 
-  /* ── click to look ───────────────────────────────────────────── */
-  #lock { position:fixed; inset:0; z-index:35; display:flex; align-items:center;
-    justify-content:center; background:rgba(6,7,8,.78); cursor:pointer; }
-  #lock.off { display:none; }
-  #lock div { text-align:center; }
-  #lock b { display:block; font-size:15px; letter-spacing:.24em; text-transform:uppercase; }
-  #lock span { display:block; margin-top:10px; font-size:11px; letter-spacing:.12em; color:var(--dim); }
+  /* ── pointer hint: a toast, never a blocker ──────────────────── */
+  #lock { position:fixed; left:50%; bottom:70px; transform:translateX(-50%); z-index:22;
+    font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
+    background:rgba(8,9,11,.8); padding:8px 16px; pointer-events:none;
+    clip-path:polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%);
+    transition:opacity .4s linear; }
+  #lock.off { opacity:0; }
 
   /* ── hint line ───────────────────────────────────────────────── */
   #hint { position:fixed; left:16px; bottom:16px; font-size:11px; letter-spacing:.1em;
@@ -190,7 +190,7 @@
 <div id="fab"><span>cut</span></div>
 <div id="hazard"></div>
 
-<div id="lock"><div><b>клик — смотреть мышью</b><span>wasd идти · e шлюз · m разрез</span></div></div>
+<div id="lock">клик по экрану — смотреть мышью · или тяни мышью с зажатой кнопкой</div>
 
 <div id="sheet">
   <div class="stripe"></div>
@@ -314,8 +314,10 @@ function newRun() {
     over: null,
   };
   const start = Object.assign({}, CARDS.find(c => c.id === 'T-03'));
+  // No shaft under your feet at the start: the first thing you must do is
+  // walk, not open a draft from where you woke up.
   S.rooms['0,0,0'] = { card: start, x:0, y:0, z:0,
-                       gates: ['N','S','DOWN'], seen: true };
+                       gates: ['N','S'], seen: true };
   rebuild();
   hud();
 }
@@ -529,8 +531,84 @@ function rebuild() {
     l.position.set(r.x*C.size, r.y*C.height + C.height - 0.6, r.z*C.size);
     world.add(l);
   }
+
+  // doors are separate objects, not merged: a leaf has to move
+  doors = [];
+  for (const r of list) for (const d of r.gates) doors.push(mkDoor(r, d));
+
   placeCamera();
 }
+
+// ── doors ───────────────────────────────────────────────────────
+// Two leaves that part into the wall. They are the reason a gate is not a
+// black hole: nothing passes until the leaves are out of the way.
+let doors = [];
+
+function mkDoor(r, dir) {
+  const HS = C.inner/2, GW = C.gateW, GH = C.gateH, T = C.wallT;
+  const ox = r.x*C.size, oy = r.y*C.height, oz = r.z*C.size;
+  const half = GW/2, leafW = half - 0.02, th = 0.07;
+  const vert = (dir === 'UP' || dir === 'DOWN');
+
+  const group = new THREE.Group();
+  const mk = (w, h, d) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.metal);
+  const leaves = [], bases = [];
+
+  for (let i = 0; i < 2; i++) {
+    const s = i === 0 ? -1 : 1;
+    let m, base;
+    if (vert) {
+      m = mk(leafW, th, 2.2);
+      base = new THREE.Vector3(ox + s*GW/4, oy + (dir === 'UP' ? C.height - 0.06 : 0.06), oz);
+    } else if (dir === 'N' || dir === 'S') {
+      m = mk(leafW, GH, th);
+      base = new THREE.Vector3(ox + s*GW/4,
+                               oy + GH/2,
+                               oz + (dir === 'N' ? -HS + 0.09 : HS - 0.09));
+    } else {
+      m = mk(th, GH, leafW);
+      base = new THREE.Vector3(ox + (dir === 'E' ? HS - 0.09 : -HS + 0.09),
+                               oy + GH/2,
+                               oz + s*GW/4);
+    }
+    m.position.copy(base);
+    group.add(m);
+    leaves.push(m); bases.push(base.clone());
+  }
+
+  // amber seam where the leaves meet
+  const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, vert ? 0.09 : GH - 0.1, 0.03), M.amber);
+  if (vert) { seam.scale.z = 70; seam.position.set(ox, oy + (dir === 'UP' ? C.height - 0.09 : 0.09), oz); }
+  else if (dir === 'N' || dir === 'S') seam.position.set(ox, oy + GH/2, oz + (dir === 'N' ? -HS + 0.12 : HS - 0.12));
+  else seam.position.set(ox + (dir === 'E' ? HS - 0.12 : -HS + 0.12), oy + GH/2, oz);
+  group.add(seam);
+
+  world.add(group);
+  return { dir: dir, room: r, leaves: leaves, bases: bases, seam: seam,
+           open: 0, want: 0, vert: vert, half: half };
+}
+
+function animDoors(dt) {
+  for (const d of doors) {
+    d.open += (d.want - d.open) * Math.min(1, dt*11);
+    const k = d.open;
+    for (let i = 0; i < 2; i++) {
+      const s = i === 0 ? -1 : 1;
+      const m = d.leaves[i], b = d.bases[i];
+      const slide = s * k * d.half;
+      if (d.vert)        m.position.set(b.x + slide, b.y, b.z);
+      else if (d.dir === 'N' || d.dir === 'S') m.position.set(b.x + slide, b.y, b.z);
+      else               m.position.set(b.x, b.y, b.z + slide);
+    }
+    if (d.seam) d.seam.visible = d.open < 0.25;
+  }
+}
+
+function doorsAt(r, dir) {
+  return doors.filter(d => d.room === r && d.dir === dir);
+}
+function openDoor(r, dir) { for (const d of doorsAt(r, dir)) d.want = 1; }
+function shutDoors(r) { for (const d of doors.filter(x => x.room === r)) d.want = 0; }
 
 function buildRoom(r, isHere, F, W, CL, MT, AM, WA) {
   const S0 = C.size, I = C.inner, T = C.wallT, H = C.height;
@@ -655,12 +733,14 @@ function placeCamera() {
 
 const keys = {};
 function tickMove(dt) {
-  if (S.draft || S.over || !locked) return;
+  // walking never depends on the mouse being captured: if the capture fails
+  // the player still moves, and looking falls back to drag
+  if (S.draft || S.over || S.cross) return;
   let fw = 0, sd = 0;
-  if (keys['KeyW'] || keys['ArrowUp'])    fw += 1;
-  if (keys['KeyS'] || keys['ArrowDown'])  fw -= 1;
-  if (keys['KeyD'])                       sd += 1;
-  if (keys['KeyA'])                       sd -= 1;
+  if (keys['KeyW']) fw += 1;
+  if (keys['KeyS']) fw -= 1;
+  if (keys['KeyD']) sd += 1;
+  if (keys['KeyA']) sd -= 1;
   if (!fw && !sd) return;
   const len = Math.hypot(fw, sd) || 1;
   const sp = C.speed * dt;
@@ -739,7 +819,7 @@ function paintDraft() {
     const known = !!KNOWN[c.id] && !blind;
     return '<div class="card' + (blind ? ' blind' : '') + (d.sel === i ? ' sel' : '') + '" data-i="' + i + '">' +
       '<div class="k">' + c.id + ' · ' + c.type + '</div>' +
-      '<div class="n">' + (known ? c.eff : '▒▒▒▒ ▒▒▒') + '</div>' +
+      '<div class="n">' + (known ? c.eff : '· · · · ·') + '</div>' +
       '<div class="f">роль <b>' + c.role + '</b><br>⌀ <b>' + c.size + '</b> м · пит <b>' + c.pit + '</b>' +
       (c.down ? '<br><b>шахта вниз</b>' : '') + (c.up ? '<br><b>люк вверх</b>' : '') + '</div>' +
       '<div class="p">' + c.ticks + ' т</div>' +
@@ -783,23 +863,40 @@ function placeChosen() {
 // ── moving through a gate ───────────────────────────────────────
 function transition(dir) {
   const here = S.rooms[S.here];
+  const oldHere = here;
   const G = GATES[dir];
   const v = G.v;
   const nk = key(here.x + v[0], here.y + v[1], here.z + v[2]);
   const n = S.rooms[nk];
   if (!n) return;
+
+  openDoor(here, dir);
+  const fromPos = rig.position.clone();
+  const fromYaw = S.yaw, fromPitch = S.pitch;
+
   // step out of the new compartment's opposite gate, facing inwards
   const back = GATES[G.opp];
-  const HS = C.inner/2 - 0.9;
+  const HS = C.inner/2 - 0.95;
   S.here = nk;
   S.pos.x = back.v[0] * HS;
   S.pos.z = back.v[2] * HS;
-  S.yaw = Math.atan2(-(-v[0]), -(-v[2])) - Math.PI;
-  if (dir === 'UP')   S.yaw = 0;
-  if (dir === 'DOWN') S.yaw = 0;
+  S.yaw = Math.atan2(v[0], v[2]) - Math.PI;
+  S.pitch = 0;
   S.came = n.card;
   S.ticks += n.card.ticks;          // the turn is the gate-to-gate crossing
   rebuild();
+
+  // the leaf you just passed through must stay open while the camera crosses
+  for (const d of doorsAt(oldHere, dir)) { d.want = 1; d.open = 1; }
+  for (const d of doorsAt(n, back))      { d.want = 1; d.open = 0.55; }
+
+  S.cross = {
+    t0: performance.now(), dur: 760,
+    from: fromPos,
+    to: new THREE.Vector3(n.x*C.size + S.pos.x, n.y*C.height + C.eye, n.z*C.size + S.pos.z),
+    fromYaw: fromYaw, toYaw: S.yaw, fromPitch: fromPitch,
+  };
+
   if (S.ticks >= nextSync()) sync();
   hud();
 }
@@ -934,30 +1031,49 @@ function drawCut() {
 }
 
 // ── input ───────────────────────────────────────────────────────
-let locked = false;
+let locked = false, dragging = false;
 const lockEl = document.getElementById('lock');
 
-renderer.domElement.addEventListener('click', () => {
-  if (!S.draft) renderer.domElement.requestPointerLock();
+function tryLock() {
+  if (S.draft) return;
+  const p = renderer.domElement.requestPointerLock();
+  if (p && p.catch) p.catch(() => {});       // capture is a convenience, not a gate
+}
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  dragging = true;
+  tryLock();
 });
-lockEl.addEventListener('click', () => renderer.domElement.requestPointerLock());
+addEventListener('mouseup', () => { dragging = false; });
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
-  lockEl.classList.toggle('off', locked || !!S.draft);
+  lockEl.classList.toggle('off', locked);
 });
 
 document.addEventListener('mousemove', (e) => {
-  if (!locked || S.draft) return;
-  S.yaw -= e.movementX * 0.0022;
-  S.pitch -= e.movementY * 0.0022;
-  S.pitch = Math.max(-1.2, Math.min(1.2, S.pitch));
+  if (S.draft || S.cross || S.over) return;
+  if (!locked && !dragging) return;          // drag-look when the capture is refused
+  S.yaw -= (e.movementX || 0) * 0.0024;
+  S.pitch -= (e.movementY || 0) * 0.0024;
+  S.pitch = Math.max(-1.15, Math.min(1.15, S.pitch));
   placeCamera();
 });
 
 addEventListener('keydown', (ev) => {
   const k = ev.code;
   keys[k] = true;
+
+  // keyboard look, so a lost mouse capture never strands the player
+  if (!S.draft && !S.cross && !S.over) {
+    const step = 0.05;
+    if (k === 'ArrowLeft')  { S.yaw += step; placeCamera(); return; }
+    if (k === 'ArrowRight') { S.yaw -= step; placeCamera(); return; }
+    if (k === 'ArrowUp')    { S.pitch = Math.min(1.15, S.pitch + step); placeCamera(); return; }
+    if (k === 'ArrowDown')  { S.pitch = Math.max(-1.15, S.pitch - step); placeCamera(); return; }
+  }
+
   if (k === 'KeyM') { ev.preventDefault();
     document.getElementById('cut').classList.contains('on') ? closeCut() : openCut(); return; }
   if (k === 'KeyR') { newRun(); document.getElementById('end').classList.remove('on'); return; }
@@ -972,13 +1088,17 @@ addEventListener('keydown', (ev) => {
   }
   if (k === 'KeyE' || k === 'Enter') {
     ev.preventDefault();
+    if (S.cross) return;
     const g = gateNear();
     if (!g) { bump(); return; }
     const r = S.rooms[S.here];
     const v = GATES[g.dir].v;
     const n = S.rooms[key(r.x + v[0], r.y + v[1], r.z + v[2])];
-    if (n) transition(g.dir);
-    else openDraft(g.dir);
+    // the leaves part first; what happens next waits for them to be out of
+    // the way, so the door is a door and not a menu button
+    openDoor(r, g.dir);
+    if (n) setTimeout(() => { if (!S.draft && !S.over) transition(g.dir); }, 220);
+    else   setTimeout(() => { if (!S.draft && !S.over) openDraft(g.dir); }, 260);
   }
 });
 addEventListener('keyup', (ev) => { keys[ev.code] = false; });
@@ -1000,8 +1120,29 @@ function tick(now) {
   requestAnimationFrame(tick);
   const dt = Math.min(0.05, (now - last)/1000); last = now;
   tickMove(dt);
+  animDoors(dt);
+  animCross(now);
   renderer.render(scene, camera);
   if (now - hudT > 120) { hudT = now; if (!S.draft) hud(); }
+}
+
+// the walk through the gate: the camera travels the doorway instead of being
+// teleported, so the compartment on the other side arrives by being entered
+function animCross(now) {
+  const c = S.cross;
+  if (!c) return;
+  const k = Math.min(1, (now - c.t0) / c.dur);
+  const e = k * k * (3 - 2 * k);
+  rig.position.set(
+    c.from.x + (c.to.x - c.from.x) * e,
+    c.from.y + (c.to.y - c.from.y) * e + Math.sin(k * Math.PI) * 0.05,
+    c.from.z + (c.to.z - c.from.z) * e);
+  let dy = c.toYaw - c.fromYaw;
+  while (dy > Math.PI) dy -= Math.PI*2;
+  while (dy < -Math.PI) dy += Math.PI*2;
+  rig.rotation.y = c.fromYaw + dy * e;
+  camera.rotation.x = c.fromPitch * (1 - e);
+  if (k >= 1) { S.cross = null; placeCamera(); }
 }
 
 document.title = 'DATUM v2 · ' + BUILD;
